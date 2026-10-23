@@ -18,19 +18,6 @@ export default function FootballCardGame() {
     league: [],
     nationality: []
   });
-  const [newValues, setNewValues] = useState({ position: '', league: '', nationality: '' });
-
-  // In-game states
-  const [tableCards, setTableCards] = useState({ position: null, league: null, nationality: null });
-  const [currentTurn, setCurrentTurn] = useState(0);
-  const [turnPhase, setTurnPhase] = useState('placing');
-  const [timeLeft, setTimeLeft] = useState(20);
-  const [lastPlayedCard, setLastPlayedCard] = useState(null);
-  const [stealingPlayerId, setStealingPlayerId] = useState(null);
-  const [winner, setWinner] = useState(null);
-  const [feedback, setFeedback] = useState('');
-  const [transitionTime, setTransitionTime] = useState(5);
-  const [nextPlayerName, setNextPlayerName] = useState('');
 
   // 1. Load categories from Supabase
   useEffect(() => {
@@ -76,11 +63,25 @@ export default function FootballCardGame() {
     fetchRooms();
   };
 
-  // Fetch rooms list
+  // Fetch rooms list and cleanup rooms whose host is no longer in room_players
   const fetchRooms = async () => {
-    const { data } = await supabase.from('rooms').select('*').eq('status', 'waiting');
-    if (data) {
-      setRooms(data);
+    const { data: roomsData } = await supabase.from('rooms').select('*').eq('status', 'waiting');
+    const { data: playersData } = await supabase.from('room_players').select('*');
+
+    if (roomsData && playersData) {
+      // ตรวจสอบว่าห้องไหนไม่มี Host หรือไม่มีผู้เล่นที่เป็น Host อยู่ในตาราง room_players ให้ลบทิ้ง
+      const validRooms = [];
+      for (const room of roomsData) {
+        const hasHost = playersData.some(p => p.room_id === room.id && p.username === room.host);
+        if (!hasHost) {
+          // ลบห้องที่ Host หายออกไปจากฐานข้อมูลทันที
+          await supabase.from('rooms').delete().eq('id', room.id);
+          await supabase.from('room_players').delete().eq('room_id', room.id);
+        } else {
+          validRooms.push(room);
+        }
+      }
+      setRooms(validRooms);
     }
   };
 
@@ -133,7 +134,7 @@ export default function FootballCardGame() {
   // Realtime Subscribe for room and players
   const subscribeRoom = (roomId) => {
     const channel = supabase.channel(`room-${roomId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` }, (payload) => {
         fetchRoomPlayers(roomId);
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, () => {
@@ -157,7 +158,13 @@ export default function FootballCardGame() {
 
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
-    if (playersData) setRoomPlayers(playersData);
+    if (playersData) {
+      setRoomPlayers(playersData);
+      // ตรวจสอบว่าถ้าไม่มี Host อยู่ในรายชื่อผู้เล่นในห้องนี้แล้ว ให้ห้องปิดตัวลง
+      if (currentRoom && !playersData.some(p => p.username === currentRoom.host)) {
+        leaveRoom();
+      }
+    }
   };
 
   // Leave room handler
@@ -247,7 +254,7 @@ export default function FootballCardGame() {
             </div>
 
             <div className="flex gap-3 mb-6">
-              <button createRoom onClick={createRoom} className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow cursor-pointer text-sm">
+              <button onClick={createRoom} className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow cursor-pointer text-sm">
                 + Create Room
               </button>
               <button 
