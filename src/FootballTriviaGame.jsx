@@ -10,6 +10,7 @@ export default function FootballCardGame() {
   const [rooms, setRooms] = useState([]);
   const [currentRoom, setCurrentRoom] = useState(null);
   const [roomPlayers, setRoomPlayers] = useState([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // ข้อมูลหมวดหมู่และการ์ด
   const [categories, setCategories] = useState({
@@ -23,7 +24,7 @@ export default function FootballCardGame() {
   const [tableCards, setTableCards] = useState({ position: null, league: null, nationality: null });
   const [currentTurn, setCurrentTurn] = useState(0);
   const [turnPhase, setTurnPhase] = useState('placing');
-  const [timeLeft, setTimeLeft] = useState(30);
+  const [timeLeft, setTimeLeft] = useState(20);
   const [lastPlayedCard, setLastPlayedCard] = useState(null);
   const [stealingPlayerId, setStealingPlayerId] = useState(null);
   const [winner, setWinner] = useState(null);
@@ -68,6 +69,12 @@ export default function FootballCardGame() {
     if (data) setRooms(data);
   };
 
+  const handleRefreshRooms = async () => {
+    setIsRefreshing(true);
+    await fetchRooms();
+    setTimeout(() => setIsRefreshing(false), 500);
+  };
+
   // สร้างห้องใหม่
   const createRoom = async () => {
     const roomName = `${username}'s Room`;
@@ -93,7 +100,6 @@ export default function FootballCardGame() {
 
   // เข้าร่วมห้อง
   const joinRoom = async (room) => {
-    // เช็คจำนวนคนในห้องก่อน
     const { data: existing } = await supabase.from('room_players').select('*').eq('room_id', room.id);
     if (existing && existing.length >= 4) {
       alert('ห้องนี้เต็มแล้ว (สูงสุด 4 คน)');
@@ -129,8 +135,7 @@ export default function FootballCardGame() {
   };
 
   const fetchRoomPlayers = async (roomId) => {
-    const { data } = await supabase.from('room_players').select('*').eq('id', roomId); // ใช้ eq('room_id', roomId) แต่ตาราง room_players ต้องมีคอลัมน์ room_id
-    // โค้ดปรับแก้ให้ตรงกับโครงสร้าง
+    // แก้ไขจาก eq('id', roomId) เป็น eq('room_id', roomId) ให้ถูกต้อง
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) setRoomPlayers(playersData);
   };
@@ -164,7 +169,6 @@ export default function FootballCardGame() {
       return { ...p, hand, score: 0 };
     });
 
-    // สุ่มการ์ดโต๊ะกลางเริ่มต้น
     const posList = categories.position;
     const leaList = categories.league;
     const natList = categories.nationality;
@@ -174,7 +178,6 @@ export default function FootballCardGame() {
       nationality: natList[Math.floor(Math.random() * natList.length)]
     };
 
-    // อัปเดตสถานะห้องเป็น playing บน Supabase
     await supabase.from('rooms').update({ 
       status: 'playing', 
       players_data: updatedPlayers,
@@ -188,7 +191,7 @@ export default function FootballCardGame() {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-6 font-sans">
         <form onSubmit={handleLogin} className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-sm w-full text-center">
-          <h1 className="text-2xl font-bold mb-4 text-emerald-400">⚽ เข้าสู่เกมฟุตบอลเทווี</h1>
+          <h1 className="text-2xl font-bold mb-4 text-emerald-400">⚽ เข้าสู่เกมฟุตบอลเทวิยา</h1>
           <p className="text-xs text-slate-400 mb-6">กรอกชื่อของคุณ (สูงสุด 8 ตัวอักษร เล่นเสร็จข้อมูลจะถูกล้าง)</p>
           <input 
             type="text" 
@@ -224,8 +227,12 @@ export default function FootballCardGame() {
               <button onClick={createRoom} className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow cursor-pointer text-sm">
                 + สร้างห้องใหม่
               </button>
-              <button onClick={fetchRooms} className="px-4 py-3 bg-slate-700 hover:bg-slate-600 font-bold rounded-xl transition cursor-pointer text-sm">
-                🔄 รีเฟรช
+              <button 
+                onClick={handleRefreshRooms} 
+                disabled={isRefreshing}
+                className="px-4 py-3 bg-slate-700 hover:bg-slate-600 font-bold rounded-xl transition cursor-pointer text-sm disabled:opacity-50"
+              >
+                {isRefreshing ? '🔄 กำลังโหลด...' : '🔄 รีเฟรช'}
               </button>
             </div>
 
