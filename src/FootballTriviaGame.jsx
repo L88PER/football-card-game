@@ -12,7 +12,7 @@ export default function FootballCardGame() {
   const [roomPlayers, setRoomPlayers] = useState([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // ข้อมูลหมวดหมู่และการ์ด
+  // Categories and cards data
   const [categories, setCategories] = useState({
     position: [],
     league: [],
@@ -20,7 +20,7 @@ export default function FootballCardGame() {
   });
   const [newValues, setNewValues] = useState({ position: '', league: '', nationality: '' });
 
-  // สถานะเกมในห้อง
+  // In-game states
   const [tableCards, setTableCards] = useState({ position: null, league: null, nationality: null });
   const [currentTurn, setCurrentTurn] = useState(0);
   const [turnPhase, setTurnPhase] = useState('placing');
@@ -32,10 +32,23 @@ export default function FootballCardGame() {
   const [transitionTime, setTransitionTime] = useState(5);
   const [nextPlayerName, setNextPlayerName] = useState('');
 
-  // 1. โหลดข้อมูล Categories จาก Supabase
+  // 1. Load categories from Supabase
   useEffect(() => {
     loadCategoriesFromDB();
   }, []);
+
+  // Clean up room if host unloads/refreshes page while in lobby
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (currentRoom && currentRoom.host === username) {
+        supabase.from('rooms').delete().eq('id', currentRoom.id).then();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [currentRoom, username]);
 
   const loadCategoriesFromDB = async () => {
     const { data } = await supabase.from('category_items').select(`id, item_value, image_url, categories (key_name)`);
@@ -51,22 +64,24 @@ export default function FootballCardGame() {
     }
   };
 
-  // จัดการ Login ชั่วคราว
+  // Temporary Login handler
   const handleLogin = (e) => {
     e.preventDefault();
     if (!username.trim()) return;
     if (username.trim().length > 8) {
-      alert('ชื่อผู้ใช้ต้องไม่เกิน 8 ตัวอักษร');
+      alert('Username must not exceed 8 characters.');
       return;
     }
     setIsLoggedIn(true);
     fetchRooms();
   };
 
-  // ดึงรายการห้อง
+  // Fetch rooms list
   const fetchRooms = async () => {
     const { data } = await supabase.from('rooms').select('*').eq('status', 'waiting');
-    if (data) setRooms(data);
+    if (data) {
+      setRooms(data);
+    }
   };
 
   const handleRefreshRooms = async () => {
@@ -75,7 +90,7 @@ export default function FootballCardGame() {
     setTimeout(() => setIsRefreshing(false), 500);
   };
 
-  // สร้างห้องใหม่
+  // Create a new room
   const createRoom = async () => {
     const roomName = `${username}'s Room`;
     const { data, error } = await supabase
@@ -85,12 +100,11 @@ export default function FootballCardGame() {
       .single();
 
     if (error) {
-      alert('สร้างห้องไม่สำเร็จ');
+      alert('Failed to create room.');
       return;
     }
 
     const newRoom = data;
-    // เพิ่ม Host เข้าห้องเป็น Player คนแรก
     await supabase.from('room_players').insert([{ room_id: newRoom.id, username: username, score: 0, hand: [] }]);
 
     setCurrentRoom(newRoom);
@@ -98,15 +112,15 @@ export default function FootballCardGame() {
     subscribeRoom(newRoom.id);
   };
 
-  // เข้าร่วมห้อง
+  // Join an existing room
   const joinRoom = async (room) => {
     const { data: existing } = await supabase.from('room_players').select('*').eq('room_id', room.id);
     if (existing && existing.length >= 4) {
-      alert('ห้องนี้เต็มแล้ว (สูงสุด 4 คน)');
+      alert('This room is full (maximum 4 players).');
       return;
     }
     if (existing && existing.some(p => p.username === username)) {
-      alert('คุณอยู่ในห้องนี้แล้ว');
+      alert('You are already in this room.');
       return;
     }
 
@@ -116,11 +130,18 @@ export default function FootballCardGame() {
     subscribeRoom(room.id);
   };
 
-  // Realtime Subscribe ห้องและผู้เล่น
+  // Realtime Subscribe for room and players
   const subscribeRoom = (roomId) => {
     const channel = supabase.channel(`room-${roomId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` }, () => {
         fetchRoomPlayers(roomId);
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, () => {
+        alert('Host left the room. The room has been closed.');
+        setCurrentRoom(null);
+        setRoomPlayers([]);
+        setView('roomList');
+        fetchRooms();
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, (payload) => {
         if (payload.new.status === 'playing') {
@@ -135,25 +156,27 @@ export default function FootballCardGame() {
   };
 
   const fetchRoomPlayers = async (roomId) => {
-    // แก้ไขจาก eq('id', roomId) เป็น eq('room_id', roomId) ให้ถูกต้อง
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) setRoomPlayers(playersData);
   };
 
-  // ออกจากห้อง
+  // Leave room handler
   const leaveRoom = async () => {
     if (currentRoom) {
-      await supabase.from('room_players').delete().eq('room_id', currentRoom.id).eq('username', username);
       if (currentRoom.host === username) {
         await supabase.from('rooms').delete().eq('id', currentRoom.id);
+        await supabase.from('room_players').delete().eq('room_id', currentRoom.id);
+      } else {
+        await supabase.from('room_players').delete().eq('room_id', currentRoom.id).eq('username', username);
       }
     }
     setCurrentRoom(null);
+    setRoomPlayers([]);
     setView('roomList');
     fetchRooms();
   };
 
-  // Host กดเริ่มเกม
+  // Host starts the game
   const startGameHost = async () => {
     const keys = Object.keys(categories);
     const updatedPlayers = roomPlayers.map(p => {
@@ -186,23 +209,23 @@ export default function FootballCardGame() {
     }).eq('id', currentRoom.id);
   };
 
-  // หน้าจอ Login (ชื่อชั่วคราว ไม่เกิน 8 ตัวอักษร)
+  // Temporary Login Screen
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-6 font-sans">
         <form onSubmit={handleLogin} className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-sm w-full text-center">
-          <h1 className="text-2xl font-bold mb-4 text-emerald-400">⚽ เข้าสู่เกมฟุตบอลเทวิยา</h1>
-          <p className="text-xs text-slate-400 mb-6">กรอกชื่อของคุณ (สูงสุด 8 ตัวอักษร เล่นเสร็จข้อมูลจะถูกล้าง)</p>
+          <h1 className="text-2xl font-bold mb-4 text-emerald-400">⚽ Football Trivia Game</h1>
+          <p className="text-xs text-slate-400 mb-6">Enter your username (Max 8 characters. Data clears after session ends)</p>
           <input 
             type="text" 
             maxLength={8}
-            placeholder="ชื่อผู้เล่น (ไม่เกิน 8 ตัว)" 
+            placeholder="Username (Max 8 chars)" 
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-center text-white mb-4 focus:outline-none focus:border-emerald-400 font-bold"
           />
           <button type="submit" className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer">
-            เข้าสู่หน้าหลักห้อง
+            Enter Lobby
           </button>
         </form>
       </div>
@@ -213,33 +236,33 @@ export default function FootballCardGame() {
     <div className="min-h-screen bg-slate-900 text-white p-6 flex flex-col justify-between font-sans">
       <div className="flex-1 flex flex-col items-center justify-center">
         
-        {/* หน้าแสดงรายการห้อง (Room List) */}
+        {/* Room List View */}
         {view === 'roomList' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full">
             <div className="flex justify-between items-center mb-6">
-              <h1 className="text-xl font-bold text-emerald-400">👤 ผู้เล่น: {username}</h1>
+              <h1 className="text-xl font-bold text-emerald-400">👤 Player: {username}</h1>
               <button onClick={() => setView('customize')} className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg border border-slate-600">
-                ⚙️ จัดการข้อมูล
+                ⚙️ Customize
               </button>
             </div>
 
             <div className="flex gap-3 mb-6">
-              <button onClick={createRoom} className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow cursor-pointer text-sm">
-                + สร้างห้องใหม่
+              <button createRoom onClick={createRoom} className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow cursor-pointer text-sm">
+                + Create Room
               </button>
               <button 
                 onClick={handleRefreshRooms} 
                 disabled={isRefreshing}
                 className="px-4 py-3 bg-slate-700 hover:bg-slate-600 font-bold rounded-xl transition cursor-pointer text-sm disabled:opacity-50"
               >
-                {isRefreshing ? '🔄 กำลังโหลด...' : '🔄 รีเฟรช'}
+                {isRefreshing ? '🔄 Loading...' : '🔄 Refresh'}
               </button>
             </div>
 
-            <h3 className="text-slate-400 text-sm mb-3">ห้องที่เปิดรออยู่:</h3>
+            <h3 className="text-slate-400 text-sm mb-3">Available Rooms:</h3>
             <div className="space-y-3 max-h-60 overflow-y-auto">
               {rooms.length === 0 ? (
-                <p className="text-center text-slate-500 text-xs py-4">ยังไม่มีห้องว่าง สร้างห้องเองได้เลย!</p>
+                <p className="text-center text-slate-500 text-xs py-4">No rooms available. Create one!</p>
               ) : (
                 rooms.map(room => (
                   <div key={room.id} className="flex justify-between items-center bg-slate-700/60 p-3 rounded-xl border border-slate-600">
@@ -248,7 +271,7 @@ export default function FootballCardGame() {
                       <div className="text-[10px] text-slate-400">Host: {room.host}</div>
                     </div>
                     <button onClick={() => joinRoom(room)} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-xs font-bold rounded-lg cursor-pointer">
-                      เข้าร่วม
+                      Join
                     </button>
                   </div>
                 ))
@@ -257,14 +280,14 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* หน้า Lobby รอผู้เล่นเข้าห้อง */}
+        {/* Room Lobby View */}
         {view === 'roomLobby' && currentRoom && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
             <h2 className="text-2xl font-bold mb-2 text-emerald-400">{currentRoom.name}</h2>
-            <p className="text-xs text-slate-400 mb-6">รอผู้เล่นคนอื่นเข้าร่วม (สูงสุด 4 คน)</p>
+            <p className="text-xs text-slate-400 mb-6">Waiting for players (Max 4 players)</p>
 
             <div className="bg-slate-700/50 p-4 rounded-xl mb-6 text-left border border-slate-600">
-              <h4 className="text-xs font-bold text-slate-300 mb-2 uppercase">ผู้เล่นในห้อง ({roomPlayers.length}/4):</h4>
+              <h4 className="text-xs font-bold text-slate-300 mb-2 uppercase">Players in room ({roomPlayers.length}/4):</h4>
               <div className="space-y-2">
                 {roomPlayers.map((p, idx) => (
                   <div key={idx} className="flex justify-between items-center bg-slate-700 p-2 rounded-lg text-sm">
@@ -276,28 +299,28 @@ export default function FootballCardGame() {
 
             <div className="flex gap-3">
               <button onClick={leaveRoom} className="w-1/2 py-3 bg-red-600/80 hover:bg-red-600 font-bold rounded-xl text-sm transition cursor-pointer">
-                ออกจากห้อง
+                Leave Room
               </button>
               {currentRoom.host === username ? (
                 <button onClick={startGameHost} className="w-1/2 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl text-sm transition cursor-pointer shadow">
-                  เริ่มเกม 🚀
+                  Start Game 🚀
                 </button>
               ) : (
                 <div className="w-1/2 flex items-center justify-center text-xs text-slate-400 italic">
-                  รอ Host เริ่มเกม...
+                  Waiting for host to start...
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* หน้าจอจัดการข้อมูล (Customize) */}
+        {/* Customize View */}
         {view === 'customize' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-xl w-full text-center">
-            <h2 className="text-xl font-bold mb-4 text-emerald-400">⚙️ ข้อมูลการ์ดในระบบ</h2>
-            <p className="text-xs text-slate-400 mb-6">สามารถเพิ่มข้อมูลหรือดูรายการการ์ดได้ที่นี่</p>
+            <h2 className="text-xl font-bold mb-4 text-emerald-400">⚙️ Card Data Management</h2>
+            <p className="text-xs text-slate-400 mb-6">Database card information overview</p>
             <button onClick={() => setView('roomList')} className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-sm font-bold rounded-xl">
-              กลับหน้าหลัก
+              Back to Main
             </button>
           </div>
         )}
