@@ -69,7 +69,6 @@ export default function FootballCardGame() {
     loadCategoriesFromDB();
   }, [isLoggedIn]);
 
-  // ฟังก์ชันซิงค์เฉพาะตอนที่อยู่ในเกม หรือตอนกำลังนับถอยหลัง
   const syncGameState = (roomData) => {
     if (!roomData) {
       if (gameState !== 'mainMenu' && gameState !== 'customize') {
@@ -163,7 +162,6 @@ export default function FootballCardGame() {
     };
   }, [isLoggedIn, gameState]);
 
-  // Polling กลางเช็คสถานะห้อง (ไม่บังคับเด้งเข้า Lobby เองเด็ดขาด)
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -182,7 +180,6 @@ export default function FootballCardGame() {
         return;
       }
 
-      // เช็คว่า Admin ยังอยู่ในห้องไหม (ถ้า Admin ออก ให้ลบห้องทิ้ง)
       const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
       if (activePlayers && activePlayers.length > 0) {
         const adminStillInRoom = activePlayers.some(p => p.username.toLowerCase() === roomData.host?.toLowerCase());
@@ -828,14 +825,18 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* Countdown */}
+        {/* Countdown with Loading Bar */}
         {gameState === 'countdown' && (
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl w-full text-center">
             <h2 className="text-lg font-black mb-2 text-emerald-400">🚀 เตรียมตัวให้พร้อม!</h2>
-            <p className="text-slate-400 text-xs mb-6">เกมกำลังจะเริ่มต้นขึ้นในอีก...</p>
+            <p className="text-slate-400 text-xs mb-6">เกมกำลังจะเริ่มต้นขึ้น...</p>
             
-            <div className="text-6xl font-black text-yellow-400 mb-6 animate-pulse">
-              {countdownTime}
+            {/* Loading Bar Animation */}
+            <div className="w-full bg-slate-950 h-4 rounded-full overflow-hidden p-0.5 border border-slate-800 mb-6">
+              <div 
+                className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full rounded-full transition-all duration-1000 ease-linear shadow-lg"
+                style={{ width: `${(countdownTime / 10) * 100}%` }}
+              ></div>
             </div>
 
             <p className="text-[11px] text-slate-500 italic">กำลังพาผู้เล่นเข้าสู่สนามแข่งขัน...</p>
