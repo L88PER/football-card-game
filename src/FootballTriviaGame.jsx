@@ -87,7 +87,7 @@ export default function FootballCardGame() {
       if (roomData.winner_data) setWinner(roomData.winner_data);
     }
 
-    if (roomData.players_data) {
+    if (roomData.status !== 'waiting' && roomData.players_data) {
       setRoomPlayers(roomData.players_data);
       setInitialPlayerCount(roomData.players_data.length);
     }
@@ -106,7 +106,7 @@ export default function FootballCardGame() {
       if (!existingPlayer) {
         if (activePlayers.length >= 4) {
           alert('ห้องเต็มแล้ว (สูงสุด 4 คน)');
-          return;
+          return false;
         }
         await supabase.from('room_players').insert([{ 
           room_id: SINGLE_ROOM_ID, 
@@ -116,7 +116,8 @@ export default function FootballCardGame() {
         }]);
       }
     }
-    fetchRoomPlayers(SINGLE_ROOM_ID);
+    await fetchRoomPlayers(SINGLE_ROOM_ID);
+    return true;
   };
 
   const fetchRoomPlayers = async (roomId) => {
@@ -126,26 +127,28 @@ export default function FootballCardGame() {
     }
   };
 
+  // Realtime Subscription สำหรับตาราง room_players (อัปเดตรายชื่อผู้เล่นทันทีเมื่อมีคนเข้า/ออก)
   useEffect(() => {
-    if (isLoggedIn) {
-      const channel = supabase.channel(`room-fixed-${SINGLE_ROOM_ID}`)
-        .on(
-          'postgres_changes', 
-          { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${SINGLE_ROOM_ID}` }, 
-          () => {
-            fetchRoomPlayers(SINGLE_ROOM_ID);
-          }
-        )
-        .subscribe();
+    if (!isLoggedIn) return;
 
-      fetchRoomPlayers(SINGLE_ROOM_ID);
+    const channel = supabase.channel(`room-players-changes-${SINGLE_ROOM_ID}`)
+      .on(
+        'postgres_changes', 
+        { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${SINGLE_ROOM_ID}` }, 
+        () => {
+          fetchRoomPlayers(SINGLE_ROOM_ID);
+        }
+      )
+      .subscribe();
 
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
+    fetchRoomPlayers(SINGLE_ROOM_ID);
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [isLoggedIn]);
 
+  // Polling กลางสำหรับซิงค์สถานะห้อง
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -164,6 +167,7 @@ export default function FootballCardGame() {
         return;
       }
 
+      // ตรวจสอบว่า Admin ยังอยู่ในห้องจริงไหม (ถ้า Admin ออก ให้ลบห้องทิ้ง)
       const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
       if (activePlayers) {
         const adminStillInRoom = activePlayers.some(p => p.username.toLowerCase() === roomData.host?.toLowerCase());
@@ -179,6 +183,7 @@ export default function FootballCardGame() {
 
       syncGameState(roomData);
 
+      // ถ้าอยู่ในหน้า Lobby ให้ดึงรายชื่อผู้เล่นสดๆ ตลอดเวลา
       if (gameState === 'lobby') {
         fetchRoomPlayers(SINGLE_ROOM_ID);
       }
@@ -233,8 +238,10 @@ export default function FootballCardGame() {
       return;
     }
 
-    await joinRoomProcess(username);
-    setGameState('lobby');
+    const success = await joinRoomProcess(username);
+    if (success) {
+      setGameState('lobby');
+    }
   };
 
   const handleJoinRoom = async () => {
@@ -244,8 +251,10 @@ export default function FootballCardGame() {
       return;
     }
 
-    await joinRoomProcess(username);
-    setGameState('lobby');
+    const success = await joinRoomProcess(username);
+    if (success) {
+      setGameState('lobby');
+    }
   };
 
   const handleAdminEndGame = async () => {
@@ -771,7 +780,7 @@ export default function FootballCardGame() {
               <div className="space-y-2">
                 {roomPlayers.map((p, idx) => (
                   <div key={idx} className="flex justify-between items-center bg-slate-800/80 px-3.5 py-2.5 rounded-xl text-xs font-semibold border border-slate-700/50">
-                    <span>{userRole === 'admin' && p.username === username ? '👑 Admin' : '👤 Player'}</span>
+                    <span>{p.username === roomPlayers[0]?.username ? '👑 Admin' : '👤 Player'}</span>
                     <span className="text-emerald-400 font-bold">{p.username}</span>
                   </div>
                 ))}
