@@ -5,10 +5,12 @@ import { supabase } from './supabaseClient';
 export default function FootballCardGame() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [isAdminRegister, setIsAdminRegister] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [userRole, setUserRole] = useState('player'); // 'admin' หรือ 'player'
   const [authMode, setAuthMode] = useState('login'); // 'login' หรือ 'register'
   
-  const [view, setView] = useState('lobby'); // lobby, game
+  const [view, setView] = useState('mainMenu'); // mainMenu, lobby, customize, game
   const [roomPlayers, setRoomPlayers] = useState([]);
   const SINGLE_ROOM_ID = 1; // ห้องกลางถาวร
 
@@ -19,13 +21,18 @@ export default function FootballCardGame() {
     nationality: []
   });
 
+  // State สำหรับให้ Admin เพิ่มข้อมูลการ์ดใหม่
+  const [selectedCategoryKey, setSelectedCategoryKey] = useState('position');
+  const [newItemValue, setNewItemValue] = useState('');
+  const [newItemImage, setNewItemImage] = useState('');
+
   useEffect(() => {
     loadCategoriesFromDB();
   }, []);
 
-  // Realtime Subscribe for the fixed room
+  // Realtime Subscribe สำหรับห้อง Lobby
   useEffect(() => {
-    if (isLoggedIn) {
+    if (isLoggedIn && view === 'lobby') {
       const channel = supabase.channel(`room-fixed-${SINGLE_ROOM_ID}`)
         .on(
           'postgres_changes', 
@@ -51,7 +58,7 @@ export default function FootballCardGame() {
         supabase.removeChannel(channel);
       };
     }
-  }, [isLoggedIn]);
+  }, [isLoggedIn, view]);
 
   const loadCategoriesFromDB = async () => {
     const { data } = await supabase.from('category_items').select(`id, item_value, image_url, categories (key_name)`);
@@ -67,7 +74,7 @@ export default function FootballCardGame() {
     }
   };
 
-  // ฟังก์ชันสมัครสมาชิก (Register)
+  // ฟังก์ชันสมัครสมาชิก
   const handleRegister = async (e) => {
     e.preventDefault();
     const cleanUsername = username.trim();
@@ -81,55 +88,64 @@ export default function FootballCardGame() {
       return;
     }
 
-    // ตรวจสอบว่ามี Username นี้ในระบบหรือยัง
     const { data: existingUser } = await supabase.from('users').select('*').eq('username', cleanUsername).single();
     if (existingUser) {
-      alert('This username is already taken. Please choose another one.');
+      alert('This username is already taken.');
       return;
     }
 
-    // บันทึกผู้ใช้ใหม่ลงตาราง users
-    const { error } = await supabase.from('users').insert([{ username: cleanUsername, password }]);
+    const roleToAssign = isAdminRegister ? 'admin' : 'player';
+
+    const { error } = await supabase.from('users').insert([{ 
+      username: cleanUsername, 
+      password, 
+      role: roleToAssign 
+    }]);
+
     if (error) {
       alert('Registration failed.');
       return;
     }
 
-    alert('Registration successful! Please login.');
+    alert(`Registration successful as ${roleToAssign.toUpperCase()}! Please login.`);
     setAuthMode('login');
     setPassword('');
+    setIsAdminRegister(false);
   };
 
-  // ฟังก์ชันเข้าสู่ระบบ (Login) และเข้าห้องทันที
+  // ฟังก์ชัน Login (เข้าสู่หน้าหลัก)
   const handleLogin = async (e) => {
     e.preventDefault();
     const cleanUsername = username.trim();
     if (!cleanUsername) return;
 
-    // 1. ตรวจสอบว่ามี User นี้และรหัสผ่านถูกต้องไหม
     const { data: userData } = await supabase.from('users').select('*').eq('username', cleanUsername).single();
     if (!userData || userData.password !== password) {
       alert('Invalid username or 4-digit password.');
       return;
     }
 
-    // 2. เช็คว่าห้องเต็มหรือยัง (สูงสุด 4 คน)
+    setIsLoggedIn(true);
+    setUserRole(userData.role || 'player');
+    setView('mainMenu');
+  };
+
+  // เข้าห้อง Lobby
+  const joinRoom = async () => {
     const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
     if (activePlayers && activePlayers.length >= 4) {
       alert('The room is full (maximum 4 players).');
       return;
     }
 
-    // 3. เช็คว่ามีคนใช้ชื่อนี้ซ้ำอยู่ในห้องตอนนี้ไหม
-    if (activePlayers && activePlayers.some(p => p.username.toLowerCase() === cleanUsername.toLowerCase())) {
-      alert('This username is already active in the room.');
+    if (activePlayers && activePlayers.some(p => p.username.toLowerCase() === username.toLowerCase())) {
+      alert('You are already active in the room.');
       return;
     }
 
-    // 4. บันทึกเข้าห้อง active
     const { error: joinError } = await supabase.from('room_players').insert([{ 
       room_id: SINGLE_ROOM_ID, 
-      username: cleanUsername, 
+      username: username, 
       score: 0, 
       hand: [] 
     }]);
@@ -139,7 +155,6 @@ export default function FootballCardGame() {
       return;
     }
 
-    setIsLoggedIn(true);
     setView('lobby');
   };
 
@@ -147,21 +162,55 @@ export default function FootballCardGame() {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) {
       setRoomPlayers(playersData);
-      if (isLoggedIn && !playersData.some(p => p.username === username)) {
-        handleLogoutClean();
+      if (isLoggedIn && view === 'lobby' && !playersData.some(p => p.username === username)) {
+        handleLeaveRoomOnly();
       }
     }
   };
 
-  // ออกจากห้อง / ล้าง Session
+  // ออกจากห้องแต่ยังอยู่ในระบบ (กลับหน้า Main Menu)
+  const handleLeaveRoomOnly = async () => {
+    await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
+    setRoomPlayers([]);
+    setView('mainMenu');
+  };
+
+  // Logout เต็มรูปแบบ (กลับหน้า Login)
   const handleLogoutClean = async () => {
-    if (username) {
-      await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
-    }
+    await handleLeaveRoomOnly();
     setIsLoggedIn(false);
     setUsername('');
     setPassword('');
-    setRoomPlayers([]);
+    setUserRole('player');
+  };
+
+  // Admin เพิ่มไอเทมการ์ดใหม่
+  const handleAddCardItem = async (e) => {
+    e.preventDefault();
+    if (!newItemValue.trim()) return;
+
+    // หา category_id จาก key_name ('position', 'league', 'nationality')
+    const { data: catData } = await supabase.from('categories').select('id').eq('key_name', selectedCategoryKey).single();
+    if (!catData) {
+      alert('Category not found.');
+      return;
+    }
+
+    const { error } = await supabase.from('category_items').insert([{
+      category_id: catData.id,
+      item_value: newItemValue.trim(),
+      image_url: newItemImage.trim()
+    }]);
+
+    if (error) {
+      alert('Failed to add item.');
+      return;
+    }
+
+    alert('Card item added successfully!');
+    setNewItemValue('');
+    setNewItemImage('');
+    loadCategoriesFromDB();
   };
 
   const isHost = roomPlayers.length > 0 && roomPlayers[0].username === username;
@@ -207,17 +256,16 @@ export default function FootballCardGame() {
     });
   };
 
-  // หน้าจอ Login / Register
+  // 1. หน้าจอ Login / Register
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-6 font-sans">
         <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-sm w-full text-center">
           <h1 className="text-2xl font-bold mb-2 text-emerald-400">⚽ Football Trivia Game</h1>
           <p className="text-xs text-slate-400 mb-6">
-            {authMode === 'login' ? 'Login to join the room' : 'Create a new account'}
+            {authMode === 'login' ? 'Login to your account' : 'Create a new account'}
           </p>
 
-          {/* ปุ่มสลับโหมด Login / Register */}
           <div className="flex bg-slate-700 p-1 rounded-xl mb-6">
             <button 
               onClick={() => { setAuthMode('login'); setPassword(''); }}
@@ -249,11 +297,25 @@ export default function FootballCardGame() {
               placeholder="4-Digit Password" 
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-center text-white mb-6 focus:outline-none focus:border-emerald-400 font-bold tracking-widest text-sm"
+              className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-center text-white mb-4 focus:outline-none focus:border-emerald-400 font-bold tracking-widest text-sm"
               required
             />
+
+            {authMode === 'register' && (
+              <div className="flex items-center justify-center gap-2 mb-6 text-xs text-slate-300">
+                <input 
+                  type="checkbox" 
+                  id="adminCheck"
+                  checked={isAdminRegister}
+                  onChange={(e) => setIsAdminRegister(e.target.checked)}
+                  className="w-4 h-4 rounded accent-emerald-500 cursor-pointer"
+                />
+                <label htmlFor="adminCheck" className="cursor-pointer">Register as Admin 🛡️</label>
+              </div>
+            )}
+
             <button type="submit" className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer text-sm shadow">
-              {authMode === 'login' ? 'Login & Join Room' : 'Sign Up'}
+              {authMode === 'login' ? 'Login' : 'Sign Up'}
             </button>
           </form>
         </div>
@@ -265,7 +327,41 @@ export default function FootballCardGame() {
     <div className="min-h-screen bg-slate-900 text-white p-6 flex flex-col justify-between font-sans">
       <div className="flex-1 flex flex-col items-center justify-center">
         
-        {/* Lobby View */}
+        {/* 2. หน้าหลัก (Main Menu) */}
+        {view === 'mainMenu' && (
+          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+            <h1 className="text-2xl font-bold mb-1 text-emerald-400">Welcome, {username}!</h1>
+            <p className="text-xs text-slate-400 mb-6">Role: <span className="uppercase font-bold text-yellow-400">{userRole}</span></p>
+
+            <div className="space-y-3">
+              <button 
+                onClick={joinRoom}
+                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow cursor-pointer text-sm"
+              >
+                🎮 Join Game Room
+              </button>
+
+              {/* เมนูจัดการข้อมูลเฉพาะ Admin */}
+              {userRole === 'admin' && (
+                <button 
+                  onClick={() => setView('customize')}
+                  className="w-full py-3 bg-blue-600 hover:bg-blue-500 font-bold rounded-xl transition shadow cursor-pointer text-sm"
+                >
+                  ⚙️ Customize Card Data (Admin)
+                </button>
+              )}
+
+              <button 
+                onClick={handleLogoutClean}
+                className="w-full py-3 bg-slate-700 hover:bg-slate-600 font-bold rounded-xl transition cursor-pointer text-sm text-red-400"
+              >
+                🚪 Logout
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 3. หน้า Lobby รอผู้เล่น */}
         {view === 'lobby' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
             <h2 className="text-2xl font-bold mb-2 text-emerald-400">Main Game Lobby</h2>
@@ -283,8 +379,8 @@ export default function FootballCardGame() {
             </div>
 
             <div className="flex gap-3">
-              <button onClick={handleLogoutClean} className="w-1/2 py-3 bg-red-600/80 hover:bg-red-600 font-bold rounded-xl text-sm transition cursor-pointer">
-                Leave Room
+              <button onClick={handleLeaveRoomOnly} className="w-1/2 py-3 bg-red-600/80 hover:bg-red-600 font-bold rounded-xl text-sm transition cursor-pointer">
+                Back to Menu
               </button>
               {isHost ? (
                 <button 
@@ -303,7 +399,69 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* Game View Placeholder */}
+        {/* 4. หน้า Customize ข้อมูลการ์ดสำหรับ Admin */}
+        {view === 'customize' && userRole === 'admin' && (
+          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-lg w-full">
+            <h2 className="text-xl font-bold mb-2 text-emerald-400 text-center">⚙️ Admin Card Management</h2>
+            <p className="text-xs text-slate-400 mb-6 text-center">Add new items and images to category pools</p>
+
+            <form onSubmit={handleAddCardItem} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Select Category:</label>
+                <select 
+                  value={selectedCategoryKey} 
+                  onChange={(e) => setSelectedCategoryKey(e.target.value)}
+                  className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-white text-sm focus:outline-none focus:border-emerald-400"
+                >
+                  <option value="position">Position (ตำแหน่ง)</option>
+                  <option value="league">League (ลีก)</option>
+                  <option value="nationality">Nationality (สัญชาติ)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Item Value / Name:</label>
+                <input 
+                  type="text" 
+                  placeholder="e.g. Forward, Premier League, Brazil" 
+                  value={newItemValue}
+                  onChange={(e) => setNewItemValue(e.target.value)}
+                  className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-white text-sm focus:outline-none focus:border-emerald-400"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Image URL (Optional):</label>
+                <input 
+                  type="text" 
+                  placeholder="https://example.com/image.png" 
+                  value={newItemImage}
+                  onChange={(e) => setNewItemImage(e.target.value)}
+                  className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-white text-sm focus:outline-none focus:border-emerald-400"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button" 
+                  onClick={() => setView('mainMenu')} 
+                  className="w-1/2 py-3 bg-slate-700 hover:bg-slate-600 font-bold rounded-xl text-sm transition cursor-pointer"
+                >
+                  Back to Menu
+                </button>
+                <button 
+                  type="submit" 
+                  className="w-1/2 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl text-sm transition cursor-pointer shadow"
+                >
+                  Add Item ➕
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* 5. Game View Placeholder */}
         {view === 'game' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
             <h2 className="text-2xl font-bold mb-4 text-emerald-400">🎮 Game Started!</h2>
@@ -317,7 +475,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Auth & Secure Session Active.
+        © 2026 L88PER. Role-Based Auth & Session Active.
       </footer>
     </div>
   );
