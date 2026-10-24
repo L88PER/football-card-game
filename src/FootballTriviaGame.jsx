@@ -105,7 +105,7 @@ export default function FootballCardGame() {
       const existingPlayer = activePlayers.find(p => p.username.toLowerCase() === uname.toLowerCase());
       if (!existingPlayer) {
         if (activePlayers.length >= 4) {
-          alert('The room is full (maximum 4 players).');
+          alert('ห้องเต็มแล้ว (สูงสุด 4 คน)');
           return;
         }
         await supabase.from('room_players').insert([{ 
@@ -146,7 +146,6 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // Polling กลางสำหรับซิงค์สถานะห้อง
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -165,7 +164,6 @@ export default function FootballCardGame() {
         return;
       }
 
-      // ตรวจสอบว่า Admin ยังอยู่ในห้องจริงไหม (ถ้า Admin ออก ให้ลบห้องทิ้ง)
       const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
       if (activePlayers) {
         const adminStillInRoom = activePlayers.some(p => p.username.toLowerCase() === roomData.host?.toLowerCase());
@@ -231,7 +229,7 @@ export default function FootballCardGame() {
     }]);
 
     if (error) {
-      alert('Failed to create room.');
+      alert('สร้างห้องไม่สำเร็จ');
       return;
     }
 
@@ -242,7 +240,7 @@ export default function FootballCardGame() {
   const handleJoinRoom = async () => {
     const { data: roomData } = await supabase.from('rooms').select('*').eq('id', SINGLE_ROOM_ID).single();
     if (!roomData) {
-      alert('ยังไม่มีห้องที่ Admin สร้างในขณะนี้ กรุณารอ Admin สร้างห้อง');
+      alert('ยังไม่มีห้องที่ Admin สร้างในขณะนี้');
       return;
     }
 
@@ -252,7 +250,7 @@ export default function FootballCardGame() {
 
   const handleAdminEndGame = async () => {
     if (userRole !== 'admin') return;
-    if (!window.confirm('คุณต้องการปิดห้องนี้ใช่หรือไม่? ผู้เล่นทั้งหมดจะถูกส่งกลับไปหน้าหลัก')) return;
+    if (!window.confirm('ต้องการปิดห้องนี้และพาทุกคนกลับหน้าหลักใช่ไหม?')) return;
 
     await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
     await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID);
@@ -271,7 +269,6 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
   };
 
-  // ตัวจัดการเวลา (เฉพาะ Admin รัน Timer)
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
     if (isPaused) return;
@@ -350,17 +347,17 @@ export default function FootballCardGame() {
     const cleanUsername = username.trim();
     if (!cleanUsername) return;
     if (cleanUsername.length > 8) {
-      alert('Username must not exceed 8 characters.');
+      alert('ชื่อผู้ใช้ต้องไม่เกิน 8 ตัวอักษร');
       return;
     }
     if (password.length !== 4) {
-      alert('Password must be exactly 4 digits.');
+      alert('รหัสผ่านต้องเป็นตัวเลข 4 หลัก');
       return;
     }
 
     const { data: existingUser } = await supabase.from('users').select('*').eq('username', cleanUsername).single();
     if (existingUser) {
-      alert('This username is already taken.');
+      alert('ชื่อผู้ใช้นี้ถูกใช้งานแล้ว');
       return;
     }
 
@@ -373,11 +370,11 @@ export default function FootballCardGame() {
     }]);
 
     if (error) {
-      alert('Registration failed.');
+      alert('สมัครสมาชิกไม่สำเร็จ');
       return;
     }
 
-    alert(`Registration successful as ${roleToAssign.toUpperCase()}! Please login.`);
+    alert(`สมัครสมาชิกสำเร็จ (${roleToAssign.toUpperCase()}) กรุณาเข้าสู่ระบบ`);
     setAuthMode('login');
     setPassword('');
     setIsAdminRegister(false);
@@ -390,7 +387,7 @@ export default function FootballCardGame() {
 
     const { data: userData } = await supabase.from('users').select('*').eq('username', cleanUsername).single();
     if (!userData || userData.password !== password) {
-      alert('Invalid username or 4-digit password.');
+      alert('ชื่อผู้ใช้หรือรหัสผ่าน 4 หลักไม่ถูกต้อง');
       return;
     }
 
@@ -402,7 +399,7 @@ export default function FootballCardGame() {
     setUsername(cleanUsername);
     setUserRole(assignedRole);
     setIsLoggedIn(true);
-    setGameState('mainMenu'); // เข้าหน้าหลักก่อนเสมอ
+    setGameState('mainMenu');
   };
 
   const handleImageUpload = async (categoryKey, itemIndex, e) => {
@@ -449,7 +446,7 @@ export default function FootballCardGame() {
 
     const exists = categories[categoryKey].some(item => item.value.toLowerCase() === val.toLowerCase());
     if (exists) {
-      alert('มีข้อมูลนี้อยู่ในระบบแล้ว!');
+      alert('มีข้อมูลนี้อยู่ในระบบแล้ว');
       return;
     }
 
@@ -460,7 +457,7 @@ export default function FootballCardGame() {
       .single();
 
     if (catError) {
-      alert('ไม่พบหมวดหมู่ในฐานข้อมูล');
+      alert('ไม่พบหมวดหมู่');
       return;
     }
 
@@ -470,7 +467,7 @@ export default function FootballCardGame() {
       .select();
 
     if (error) {
-      alert('เพิ่มข้อมูลไม่สำเร็จ: ' + error.message);
+      alert('เพิ่มข้อมูลไม่สำเร็จ');
       return;
     }
 
@@ -574,11 +571,11 @@ export default function FootballCardGame() {
 
   const startGameHost = async () => {
     if (userRole !== 'admin') {
-      alert('Only Admin can start the game.');
+      alert('เฉพาะ Admin เท่านั้นที่เริ่มเกมได้');
       return;
     }
     if (roomPlayers.length < 2) {
-      alert('Need at least 2 players to start the game.');
+      alert('ต้องการผู้เล่นอย่างน้อย 2 คนเพื่อเริ่มเกม');
       return;
     }
 
@@ -632,50 +629,51 @@ export default function FootballCardGame() {
 
   if (!isLoggedIn) {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-6 font-sans">
-        <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-sm w-full text-center">
-          <h1 className="text-2xl font-bold mb-2 text-emerald-400">⚽ Football Trivia Game</h1>
+      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4 font-sans">
+        <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl shadow-2xl max-w-sm w-full text-center">
+          <div className="text-4xl mb-2">⚽</div>
+          <h1 className="text-xl font-black mb-1 text-emerald-400 tracking-wide">FOOTBALL TRIVIA</h1>
           <p className="text-xs text-slate-400 mb-6">
-            {authMode === 'login' ? 'Login to your account' : 'Create a new account'}
+            {authMode === 'login' ? 'เข้าสู่ระบบเพื่อเล่นเกม' : 'สมัครสมาชิกใหม่'}
           </p>
 
-          <div className="flex bg-slate-700 p-1 rounded-xl mb-6">
+          <div className="flex bg-slate-800 p-1 rounded-2xl mb-6 border border-slate-700">
             <button 
               onClick={() => { setAuthMode('login'); setPassword(''); }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition ${authMode === 'login' ? 'bg-emerald-500 text-white' : 'text-slate-400 hover:text-white'}`}
+              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition ${authMode === 'login' ? 'bg-emerald-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
             >
-              Login
+              เข้าสู่ระบบ
             </button>
             <button 
               onClick={() => { setAuthMode('register'); setPassword(''); }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition ${authMode === 'register' ? 'bg-emerald-500 text-white' : 'text-slate-400 hover:text-white'}`}
+              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition ${authMode === 'register' ? 'bg-emerald-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
             >
-              Register
+              สมัครสมาชิก
             </button>
           </div>
 
-          <form onSubmit={authMode === 'login' ? handleLogin : handleRegister}>
+          <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-3.5">
             <input 
               type="text" 
               maxLength={8}
-              placeholder="Username (Max 8 chars)" 
+              placeholder="Username (สูงสุด 8 ตัว)" 
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-center text-white mb-3 focus:outline-none focus:border-emerald-400 font-bold text-sm"
+              className="w-full p-3.5 rounded-2xl bg-slate-800 border border-slate-700 text-center text-white focus:outline-none focus:border-emerald-400 font-bold text-sm shadow-inner"
               required
             />
             <input 
               type="password" 
               maxLength={4}
-              placeholder="4-Digit Password" 
+              placeholder="รหัสผ่าน (ตัวเลข 4 หลัก)" 
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-center text-white mb-4 focus:outline-none focus:border-emerald-400 font-bold tracking-widest text-sm"
+              className="w-full p-3.5 rounded-2xl bg-slate-800 border border-slate-700 text-center text-white focus:outline-none focus:border-emerald-400 font-bold tracking-widest text-sm shadow-inner"
               required
             />
 
             {authMode === 'register' && (
-              <div className="flex items-center justify-center gap-2 mb-6 text-xs text-slate-300">
+              <div className="flex items-center justify-center gap-2 py-1 text-xs text-slate-300">
                 <input 
                   type="checkbox" 
                   id="adminCheck"
@@ -683,12 +681,12 @@ export default function FootballCardGame() {
                   onChange={(e) => setIsAdminRegister(e.target.checked)}
                   className="w-4 h-4 rounded accent-emerald-500 cursor-pointer"
                 />
-                <label htmlFor="adminCheck" className="cursor-pointer">Register as Admin 🛡️</label>
+                <label htmlFor="adminCheck" className="cursor-pointer font-medium">สมัครเป็น Admin 🛡️</label>
               </div>
             )}
 
-            <button type="submit" className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer text-sm shadow">
-              {authMode === 'login' ? 'Login' : 'Sign Up'}
+            <button type="submit" className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-2xl transition cursor-pointer text-sm shadow-lg shadow-emerald-500/20 active:scale-95">
+              {authMode === 'login' ? 'เข้าสู่ระบบ' : 'ยืนยันการสมัคร'}
             </button>
           </form>
         </div>
@@ -697,55 +695,56 @@ export default function FootballCardGame() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white p-6 flex flex-col justify-between font-sans">
+    <div className="min-h-screen bg-slate-950 text-white p-3 sm:p-4 flex flex-col justify-between font-sans max-w-md mx-auto">
       
       {gameState === 'playing' && isPaused && (
-        <div className="fixed inset-0 bg-slate-900/85 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-6 text-center">
+        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 text-center">
           <div className="text-5xl mb-3 animate-bounce">⏸️</div>
-          <h2 className="text-3xl font-bold text-amber-400 mb-2">เกมถูกหยุดชั่วคราว</h2>
-          <p className="text-slate-300 text-sm mb-6">
-            {userRole === 'admin' ? 'คุณสามารถกดปุ่มด้านล่างเพื่อเริ่มเกมต่อได้ทันที' : 'กรุณารอ Admin กดเล่นต่อเพื่อดำเนินการแข่งขัน...'}
+          <h2 className="text-2xl font-bold text-amber-400 mb-2">เกมถูกหยุดชั่วคราว</h2>
+          <p className="text-slate-300 text-xs mb-6 px-4">
+            {userRole === 'admin' ? 'คุณสามารถกดปุ่มด้านล่างเพื่อเล่นต่อได้ทันที' : 'กรุณารอ Admin ดำเนินการต่อ...'}
           </p>
 
           {userRole === 'admin' && (
             <button 
               onClick={togglePauseGame}
-              className="px-6 py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl shadow-lg transition cursor-pointer text-base animate-pulse"
+              className="w-full max-w-xs py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-2xl shadow-lg transition cursor-pointer text-sm animate-pulse"
             >
-              ▶️ เล่นต่อ (Resume Game)
+              ▶️ เล่นต่อ (Resume)
             </button>
           )}
         </div>
       )}
 
-      <div className="flex-1 flex flex-col items-center justify-center">
+      <div className="flex-1 flex flex-col items-center justify-center w-full">
         
-        {/* หน้าหลัก (Main Menu) สำหรับทุกคน */}
+        {/* Main Menu */}
         {gameState === 'mainMenu' && (
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
-            <h1 className="text-2xl font-bold mb-2 text-emerald-400">⚽ Football Trivia Game</h1>
-            <p className="text-xs text-slate-400 mb-6">ยินดีต้อนรับ, {username} ({userRole.toUpperCase()})</p>
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl shadow-2xl w-full text-center">
+            <div className="text-3xl mb-1">⚽</div>
+            <h1 className="text-lg font-black mb-1 text-emerald-400">FOOTBALL TRIVIA</h1>
+            <p className="text-xs text-slate-400 mb-6">ผู้เล่น: <span className="text-white font-bold">{username}</span> ({userRole.toUpperCase()})</p>
 
             <div className="space-y-3">
               {userRole === 'admin' ? (
                 <>
                   <button 
                     onClick={handleAdminCreateRoom}
-                    className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow cursor-pointer text-sm"
+                    className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-2xl transition shadow-lg shadow-emerald-500/20 cursor-pointer text-sm active:scale-95"
                   >
                     🏠 สร้างห้องเกมใหม่ (Create Room)
                   </button>
                   <button 
                     onClick={() => setGameState('customize')}
-                    className="w-full py-3 bg-blue-600 hover:bg-blue-500 font-bold rounded-xl transition cursor-pointer text-sm shadow"
+                    className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 font-bold rounded-2xl transition shadow-lg shadow-blue-600/20 cursor-pointer text-sm active:scale-95"
                   >
-                    ⚙️ ตั้งค่าข้อมูลและรูปการ์ด (Admin Settings)
+                    ⚙️ จัดการการ์ด / รูปภาพ (Settings)
                   </button>
                 </>
               ) : (
                 <button 
                   onClick={handleJoinRoom}
-                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow cursor-pointer text-sm"
+                  className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-2xl transition shadow-lg shadow-emerald-500/20 cursor-pointer text-sm active:scale-95"
                 >
                   🚪 เข้าร่วมห้องเกม (Join Room)
                 </button>
@@ -753,7 +752,7 @@ export default function FootballCardGame() {
 
               <button 
                 onClick={handleLogoutClean}
-                className="w-full py-3 bg-slate-700 hover:bg-slate-600 font-bold rounded-xl transition cursor-pointer text-sm text-red-400"
+                className="w-full py-3.5 bg-slate-800 hover:bg-slate-700 font-bold rounded-2xl transition cursor-pointer text-sm text-red-400 border border-slate-700 active:scale-95"
               >
                 ออกจากระบบ (Logout)
               </button>
@@ -761,42 +760,43 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* 1. Lobby */}
+        {/* Lobby */}
         {gameState === 'lobby' && (
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
-            <h1 className="text-2xl font-bold mb-2 text-emerald-400">Main Game Lobby</h1>
-            <p className="text-xs text-slate-400 mb-6">Welcome, {username} ({userRole.toUpperCase()}) - Waiting for players (2-4)</p>
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl shadow-2xl w-full text-center">
+            <h1 className="text-lg font-black mb-1 text-emerald-400">GAME LOBBY</h1>
+            <p className="text-xs text-slate-400 mb-5">รอผู้เล่นเข้าห้อง (2-4 คน)</p>
             
-            <div className="bg-slate-700/50 p-4 rounded-xl mb-6 text-left border border-slate-600">
-              <h4 className="text-xs font-bold text-slate-300 mb-2 uppercase">Players in room ({roomPlayers.length}/4):</h4>
+            <div className="bg-slate-950/60 p-4 rounded-2xl mb-5 text-left border border-slate-800">
+              <h4 className="text-[11px] font-bold text-slate-400 mb-2 uppercase tracking-wider">ผู้เล่นในห้อง ({roomPlayers.length}/4):</h4>
               <div className="space-y-2">
                 {roomPlayers.map((p, idx) => (
-                  <div key={idx} className="flex justify-between items-center bg-slate-700 p-2 rounded-lg text-sm">
-                    <span>{userRole === 'admin' && p.username === username ? '👑' : '👤'} {p.username}</span>
+                  <div key={idx} className="flex justify-between items-center bg-slate-800/80 px-3.5 py-2.5 rounded-xl text-xs font-semibold border border-slate-700/50">
+                    <span>{userRole === 'admin' && p.username === username ? '👑 Admin' : '👤 Player'}</span>
+                    <span className="text-emerald-400 font-bold">{p.username}</span>
                   </div>
                 ))}
               </div>
             </div>
 
             <div className="flex flex-col gap-3">
-              <div className="flex gap-3">
+              <div className="flex gap-2.5">
                 <button 
                   onClick={handleLeaveRoom}
-                  className="w-1/2 py-3 bg-red-600/80 hover:bg-red-600 font-bold rounded-xl transition cursor-pointer text-sm"
+                  className="w-1/2 py-3 bg-red-600/80 hover:bg-red-600 font-bold rounded-2xl transition cursor-pointer text-xs active:scale-95"
                 >
-                  🚪 ออกจากห้อง (Leave)
+                  🚪 ออกจากห้อง
                 </button>
                 {userRole === 'admin' ? (
                   <button 
                     onClick={startGameHost}
                     disabled={roomPlayers.length < 2}
-                    className="w-1/2 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow-lg cursor-pointer text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-1/2 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-2xl transition shadow-lg shadow-emerald-500/20 cursor-pointer text-xs disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
                   >
-                    Start Game 🚀
+                    เริ่มเกม 🚀
                   </button>
                 ) : (
-                  <div className="w-1/2 flex items-center justify-center text-xs text-slate-400 italic">
-                    Waiting for Admin to start...
+                  <div className="w-1/2 flex items-center justify-center text-[11px] text-slate-400 italic bg-slate-800 rounded-2xl p-2">
+                    รอ Admin เริ่มเกม...
                   </div>
                 )}
               </div>
@@ -804,119 +804,115 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* 2. หน้าจอนับถอยหลัง 10 วินาที */}
+        {/* Countdown */}
         {gameState === 'countdown' && (
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center animate-fadeIn">
-            <h2 className="text-2xl font-bold mb-3 text-emerald-400">🚀 เตรียมตัวให้พร้อม!</h2>
-            <p className="text-slate-300 text-sm mb-6">เกมกำลังจะเริ่มต้นขึ้นในอีก...</p>
+          <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl w-full text-center">
+            <h2 className="text-lg font-black mb-2 text-emerald-400">🚀 เตรียมตัวให้พร้อม!</h2>
+            <p className="text-slate-400 text-xs mb-6">เกมกำลังจะเริ่มต้นขึ้นในอีก...</p>
             
             <div className="text-6xl font-black text-yellow-400 mb-6 animate-pulse">
               {countdownTime}
             </div>
 
-            <p className="text-xs text-slate-400 italic">กำลังพาผู้เล่นทุกคนเข้าสู่สนามแข่งขัน...</p>
+            <p className="text-[11px] text-slate-500 italic">กำลังพาผู้เล่นเข้าสู่สนามแข่งขัน...</p>
           </div>
         )}
 
-        {/* หน้าจอเล่นเกมปกติ */}
+        {/* Playing Screen */}
         {gameState === 'playing' && (
-          <div className="max-w-4xl w-full flex flex-col gap-6">
+          <div className="w-full flex flex-col gap-3.5 pb-4">
             
             {userRole === 'admin' && (
-              <div className="bg-slate-800 p-3 rounded-xl shadow flex justify-between items-center border border-amber-500/50 flex-wrap gap-2">
-                <span className="text-xs text-amber-400 font-bold">🛡️ Admin Control Panel</span>
-                <div className="flex gap-2">
+              <div className="bg-slate-900 border border-amber-500/30 p-2.5 rounded-2xl shadow flex justify-between items-center gap-2">
+                <span className="text-[10px] text-amber-400 font-bold pl-1">🛡️ Admin</span>
+                <div className="flex gap-1.5">
                   <button 
                     onClick={startGameHost}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition cursor-pointer shadow"
-                    title="เริ่มเกมใหม่ทันที"
+                    className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-bold transition cursor-pointer shadow"
                   >
-                    🔄 Restart
+                    🔄 รีสตาร์ท
                   </button>
                   <button 
                     onClick={togglePauseGame}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer shadow ${
-                      isPaused ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-amber-600 hover:bg-amber-500 text-white'
-                    }`}
+                    className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-[10px] font-bold transition cursor-pointer shadow"
                   >
-                    {isPaused ? '▶️ เล่นต่อ' : '⏸️ หยุด'}
+                    ⏸️ หยุด
                   </button>
                   <button 
                     onClick={handleAdminEndGame}
-                    className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold transition cursor-pointer shadow"
-                    title="ยกเลิกและลบห้อง"
+                    className="px-2.5 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-xl text-[10px] font-bold transition cursor-pointer shadow"
                   >
-                    🛑 ปิดห้อง (End Room)
+                    🛑 ปิดห้อง
                   </button>
                 </div>
               </div>
             )}
 
-            <div className="flex justify-between items-center bg-slate-800 p-4 rounded-xl shadow">
+            {/* Turn & Score Header */}
+            <div className="bg-slate-900 border border-slate-800 p-3 rounded-2xl shadow flex justify-between items-center">
               <div>
-                <span className="text-slate-400 text-sm">Current Turn:</span>
-                <div className="text-xl font-bold text-emerald-400">
-                  {roomPlayers[currentTurn]?.username} {isMyTurn ? '(Your Turn!)' : ''}
+                <span className="text-[10px] text-slate-400 block">เทิร์นปัจจุบัน:</span>
+                <div className="text-sm font-bold text-emerald-400 truncate max-w-[120px]">
+                  {roomPlayers[currentTurn]?.username} {isMyTurn ? '(ตาคุณ!)' : ''}
                 </div>
               </div>
-              <div className="flex gap-4 items-center">
-                <div className="flex gap-4">
+              <div className="flex gap-2 items-center">
+                <div className="flex gap-1.5 overflow-x-auto max-w-[160px] pb-1">
                   {roomPlayers.map((p, idx) => (
-                    <div key={idx} className={`text-center px-3 py-1 rounded-lg ${idx === currentTurn ? 'bg-emerald-500/20 border border-emerald-500' : ''}`}>
-                      <div className="text-xs text-slate-400">{p.username}</div>
-                      <div className={`text-lg font-bold ${(p.score || 0) < 0 ? 'text-red-400' : 'text-yellow-400'}`}>
-                        {p.score || 0} pts ({p.hand?.length || 0} cards)
-                      </div>
+                    <div key={idx} className={`text-center px-2 py-1 rounded-xl text-[10px] shrink-0 ${idx === currentTurn ? 'bg-emerald-500/20 border border-emerald-500 text-white font-bold' : 'bg-slate-800 text-slate-400'}`}>
+                      <div>{p.username}</div>
+                      <div className="text-yellow-400 font-black">{p.score || 0}</div>
                     </div>
                   ))}
                 </div>
                 <button 
                   onClick={handleLeaveRoom}
-                  className="px-3 py-2 bg-red-600/80 hover:bg-red-600 text-xs font-bold rounded-lg transition cursor-pointer ml-2"
-                  title="กลับหน้าหลัก"
+                  className="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 text-red-400 text-xs font-bold rounded-xl transition cursor-pointer border border-slate-700 shrink-0"
+                  title="หน้าหลัก"
                 >
-                  🏠 หน้าหลัก
+                  🏠
                 </button>
               </div>
             </div>
 
-            <div className="bg-slate-800 p-6 rounded-xl shadow flex flex-col items-center justify-center relative">
-              <div className="absolute top-4 right-4 bg-slate-700 px-3 py-1 rounded-full text-yellow-400 font-bold text-sm">
+            {/* Table Area */}
+            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow flex flex-col items-center justify-center relative">
+              <div className="absolute top-3 right-3 bg-slate-800 border border-slate-700 px-2.5 py-0.5 rounded-full text-yellow-400 font-bold text-[11px]">
                 {turnPhase === 'answering' ? (
-                  <span className="text-emerald-400">🎤 Answer Phase (No Time Limit)</span>
+                  <span className="text-emerald-400">🎤 ช่วงตอบคำถาม</span>
                 ) : (
-                  `⏳ Time: ${timeLeft}s (Think & Place)`
+                  `⏳ ${timeLeft}s`
                 )}
               </div>
 
-              <h3 className="text-slate-400 mb-4">Table Conditions (Guess a player matching all 3!)</h3>
-              <div className="flex gap-4 flex-wrap justify-center mb-6">
+              <div className="text-[11px] text-slate-400 mb-3 text-center font-medium">เงื่อนไขบนโต๊ะ (หาผู้เล่นที่ตรงกับทั้ง 3 ข้อ):</div>
+              <div className="flex gap-2.5 justify-center w-full">
                 {['position', 'league', 'nationality'].map((type) => {
                   const card = tableCards[type];
                   return (
-                    <div key={type} className="bg-emerald-600 p-4 rounded-lg shadow-md text-center min-w-[130px] flex flex-col items-center">
-                      <div className="text-xs text-emerald-200 uppercase">{type}</div>
-                      <div className="w-12 h-12 my-2 bg-emerald-700 rounded-lg overflow-hidden flex items-center justify-center border border-emerald-400/50 shadow-inner">
+                    <div key={type} className="bg-gradient-to-b from-emerald-600 to-emerald-700 p-2 rounded-xl shadow-md text-center flex-1 max-w-[100px] flex flex-col items-center border border-emerald-500/40">
+                      <div className="text-[9px] text-emerald-200 uppercase tracking-wider font-bold truncate w-full">{type}</div>
+                      <div className="w-10 h-10 my-1.5 bg-emerald-800/80 rounded-lg overflow-hidden flex items-center justify-center border border-emerald-400/40 shadow-inner">
                         {card?.image ? (
                           <img src={card.image} alt={card.value} className="w-full h-full object-cover" />
                         ) : (
-                          <span className="text-xs text-emerald-200">⚽</span>
+                          <span className="text-xs">⚽</span>
                         )}
                       </div>
-                      <div className="text-sm font-bold mt-1">{card?.value || '-'}</div>
+                      <div className="text-[11px] font-bold text-white truncate w-full px-1">{card?.value || '-'}</div>
                     </div>
                   );
                 })}
               </div>
 
               {isMyTurn && turnPhase === 'placing' && (
-                <div className="text-center">
-                  <p className="text-emerald-300 font-medium mb-2 animate-pulse">
-                    👉 ตาของคุณ! คลิกเลือกการ์ดในมือเพื่อวางลงโต๊ะ
+                <div className="text-center mt-3.5 w-full">
+                  <p className="text-emerald-300 text-xs font-semibold mb-2 animate-pulse">
+                    👉 ตาของคุณ! เลือกการ์ดด้านล่างเพื่อวาง
                   </p>
                   <button 
                     onClick={handleSkipTurn}
-                    className="px-4 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs cursor-pointer border border-slate-600"
+                    className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-[11px] cursor-pointer border border-slate-700 font-medium"
                   >
                     ข้ามเทิร์นนี้
                   </button>
@@ -924,54 +920,58 @@ export default function FootballCardGame() {
               )}
 
               {!isMyTurn && turnPhase === 'placing' && (
-                <div className="text-center text-slate-400 text-sm italic">
-                  ⏳ รอ {roomPlayers[currentTurn]?.username} วางการ์ด...
+                <div className="text-center text-slate-400 text-xs italic mt-3.5">
+                  ⏳ รอ <span className="text-white font-bold">{roomPlayers[currentTurn]?.username}</span> วางการ์ด...
                 </div>
               )}
 
               {isMyTurn && turnPhase === 'answering' && (
-                <div className="text-center bg-slate-700/80 p-4 rounded-xl w-full">
-                  <p className="text-yellow-300 font-bold mb-2">🎤 คุณกำลังตอบชื่อนักเตะ</p>
-                  <div className="flex gap-3 justify-center">
-                    <button onClick={handleOwnerAnswerCorrect} className="px-4 py-2 bg-green-600 hover:bg-green-500 font-bold rounded-lg text-sm cursor-pointer">
-                      ตอบถูก (+1 คะแนน)
+                <div className="text-center bg-slate-800 border border-slate-700 p-3.5 rounded-2xl w-full mt-3.5">
+                  <p className="text-yellow-300 text-xs font-bold mb-2">🎤 คุณกำลังตอบชื่อนักเตะ</p>
+                  <div className="flex gap-2 justify-center">
+                    <button onClick={handleOwnerAnswerCorrect} className="flex-1 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl text-xs shadow cursor-pointer">
+                      ✅ ตอบถูก (+1)
                     </button>
-                    <button onClick={handleOwnerAnswerWrong} className="px-4 py-2 bg-red-600 hover:bg-red-500 font-bold rounded-lg text-sm cursor-pointer">
-                      ตอบผิด (-1 คะแนน)
+                    <button onClick={handleOwnerAnswerWrong} className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-xs shadow cursor-pointer">
+                      ❌ ตอบผิด (-1)
                     </button>
                   </div>
                 </div>
               )}
 
               {!isMyTurn && turnPhase === 'answering' && (
-                <div className="text-center text-slate-300 text-sm italic">
-                  🎤 {roomPlayers[currentTurn]?.username} กำลังตอบคำถาม...
+                <div className="text-center text-slate-300 text-xs italic mt-3.5">
+                  🎤 <span className="text-white font-bold">{roomPlayers[currentTurn]?.username}</span> กำลังตอบคำถาม...
                 </div>
               )}
             </div>
 
-            <div className="bg-slate-800 p-4 rounded-xl shadow">
-              <h4 className="font-bold mb-3 text-emerald-300">
-                Hand of <span className="text-yellow-400">{username} (Your Cards)</span>
+            {/* Hand Cards (Horizontal Scroll for Mobile) */}
+            <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl shadow">
+              <h4 className="font-bold text-xs mb-2.5 text-emerald-400 flex justify-between items-center">
+                <span>การ์ดในมือคุณ ({roomPlayers.find(p => p.username?.toLowerCase() === username.toLowerCase())?.hand?.length || 0})</span>
+                <span className="text-[10px] text-slate-400 font-normal">เลื่อนดู ➡️</span>
               </h4>
-              <div className="flex gap-3 overflow-x-auto pb-2">
+              <div className="flex gap-2 overflow-x-auto pb-1.5 scrollbar-thin">
                 {roomPlayers.find(p => p.username?.toLowerCase() === username.toLowerCase())?.hand?.map((card, idx) => (
                   <div 
                     key={idx} 
                     onClick={() => !isPaused && isMyTurn && turnPhase === 'placing' && handleSelectCard(idx)}
-                    className={`p-3 rounded-lg min-w-[120px] text-center transition transform flex flex-col items-center ${
-                      !isPaused && isMyTurn && turnPhase === 'placing' ? 'bg-slate-700 hover:bg-slate-600 cursor-pointer hover:-translate-y-1 border border-emerald-500/50' : 'bg-slate-800 opacity-60'
+                    className={`p-2.5 rounded-2xl min-w-[95px] max-w-[95px] text-center transition transform flex flex-col items-center shrink-0 border ${
+                      !isPaused && isMyTurn && turnPhase === 'placing' 
+                        ? 'bg-slate-800 hover:bg-slate-700 cursor-pointer active:scale-95 border-emerald-500/60 shadow-md shadow-emerald-500/10' 
+                        : 'bg-slate-950/60 opacity-50 border-slate-800'
                     }`}
                   >
-                    <div className="text-[10px] text-slate-400 uppercase">{card.type}</div>
-                    <div className="w-10 h-10 my-1 bg-slate-800 rounded overflow-hidden flex items-center justify-center border border-slate-600">
+                    <div className="text-[9px] text-slate-400 uppercase tracking-wider font-bold truncate w-full">{card.type}</div>
+                    <div className="w-10 h-10 my-1 bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center border border-slate-700 shadow-inner">
                       {card.image ? (
                         <img src={card.image} alt={card.value} className="w-full h-full object-cover" />
                       ) : (
                         <span className="text-xs">⚽</span>
                       )}
                     </div>
-                    <div className="text-xs font-bold text-white mt-1">{card.value}</div>
+                    <div className="text-[11px] font-bold text-white truncate w-full mt-0.5">{card.value}</div>
                   </div>
                 ))}
               </div>
@@ -980,46 +980,46 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* หน้าจอ Customize (Admin Settings) */}
+        {/* Customize / Admin Settings */}
         {gameState === 'customize' && userRole === 'admin' && (
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-2xl w-full">
-            <h2 className="text-2xl font-bold mb-2 text-emerald-400 text-center">⚙️ ตั้งค่าข้อมูลและรูปภาพการ์ด (Admin Settings)</h2>
-            <p className="text-slate-300 text-xs mb-6 text-center">เพิ่มข้อมูลใหม่และอัปโหลดรูปภาพเก็บลงฐานข้อมูลถาวร</p>
+          <div className="bg-slate-900 border border-slate-800 p-5 rounded-3xl shadow-2xl w-full max-h-[85vh] flex flex-col">
+            <h2 className="text-base font-bold mb-1 text-emerald-400 text-center">⚙️ จัดการข้อมูลและการ์ด</h2>
+            <p className="text-slate-400 text-[11px] mb-4 text-center">เพิ่มข้อมูลและอัปโหลดรูปภาพการ์ด</p>
 
-            <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2">
+            <div className="space-y-4 overflow-y-auto pr-1 flex-1">
               {Object.keys(categories).map((catKey) => (
-                <div key={catKey} className="bg-slate-700/50 p-4 rounded-xl border border-slate-600">
-                  <h3 className="text-emerald-300 font-bold uppercase text-sm mb-3">{catKey}</h3>
+                <div key={catKey} className="bg-slate-950/60 p-3 rounded-2xl border border-slate-800">
+                  <h3 className="text-emerald-300 font-bold uppercase text-xs mb-2">{catKey}</h3>
                   
-                  <div className="flex gap-2 mb-3">
+                  <div className="flex gap-2 mb-2.5">
                     <input 
                       type="text" 
                       placeholder={`เพิ่ม ${catKey} ใหม่...`}
                       value={newValues[catKey]}
                       onChange={(e) => setNewValues({ ...newValues, [catKey]: e.target.value })}
-                      className="flex-1 p-2 rounded bg-slate-700 border border-slate-600 text-xs focus:outline-none focus:border-emerald-400"
+                      className="flex-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs focus:outline-none focus:border-emerald-400"
                     />
                     <button 
                       onClick={() => handleAddItem(catKey)}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold rounded cursor-pointer transition"
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold rounded-xl cursor-pointer transition shrink-0"
                     >
                       + เพิ่ม
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 gap-2">
                     {categories[catKey].map((item, idx) => (
-                      <div key={item.id || idx} className="bg-slate-700 p-2 rounded-lg flex flex-col items-center gap-2 border border-slate-600">
-                        <div className="w-12 h-12 bg-slate-800 rounded flex items-center justify-center overflow-hidden border border-slate-500">
+                      <div key={item.id || idx} className="bg-slate-800/80 p-2 rounded-xl flex flex-col items-center gap-1.5 border border-slate-700/60">
+                        <div className="w-10 h-10 bg-slate-900 rounded-lg flex items-center justify-center overflow-hidden border border-slate-700">
                           {item.image ? (
                             <img src={item.image} alt={item.value} className="w-full h-full object-cover" />
                           ) : (
-                            <span className="text-[10px] text-slate-400">No Img</span>
+                            <span className="text-[9px] text-slate-500">ไม่มีรูป</span>
                           )}
                         </div>
-                        <span className="text-xs font-semibold text-center truncate w-full">{item.value}</span>
-                        <label className="text-[10px] bg-emerald-600 hover:bg-emerald-500 px-2 py-1 rounded cursor-pointer font-bold transition">
-                          Choose File
+                        <span className="text-[11px] font-semibold text-center truncate w-full">{item.value}</span>
+                        <label className="text-[10px] bg-emerald-600 hover:bg-emerald-500 px-2.5 py-1 rounded-lg cursor-pointer font-bold transition w-full text-center">
+                          เปลี่ยนรูป
                           <input 
                             type="file" 
                             accept="image/*" 
@@ -1036,31 +1036,32 @@ export default function FootballCardGame() {
 
             <button 
               onClick={() => setGameState('mainMenu')}
-              className="w-full mt-6 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer shadow-lg text-sm"
+              className="w-full mt-4 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-2xl transition cursor-pointer shadow-lg text-xs"
             >
-              บันทึกและกลับสู่หน้าหลัก
+              บันทึกและกลับหน้าหลัก
             </button>
           </div>
         )}
 
-        {/* หน้าจอจบเกม */}
+        {/* Finished Screen */}
         {gameState === 'finished' && (
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
-            <h2 className="text-3xl font-bold mb-2 text-emerald-400">🎉 Winner!</h2>
-            <p className="text-xl text-yellow-400 font-bold mb-6">{winner?.username} wins the game!</p>
+          <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl w-full text-center">
+            <div className="text-5xl mb-2 animate-bounce">🏆</div>
+            <h2 className="text-2xl font-black mb-1 text-emerald-400">ผู้ชนะเลิศ!</h2>
+            <p className="text-lg text-yellow-400 font-bold mb-6">{winner?.username} คว้าแชมป์ไปครอง!</p>
             
             <div className="flex flex-col gap-3">
               {userRole === 'admin' && (
                 <button 
                   onClick={startGameHost}
-                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl transition cursor-pointer shadow"
+                  className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-2xl transition cursor-pointer shadow-lg text-xs active:scale-95"
                 >
-                  🔄 เริ่มเกมใหม่ (Restart Game)
+                  🔄 เริ่มเกมใหม่อีกครั้ง (Restart)
                 </button>
               )}
               <button 
                 onClick={handleAdminEndGame}
-                className="w-full py-3 bg-red-600/80 hover:bg-red-600 text-white font-bold rounded-xl transition cursor-pointer"
+                className="w-full py-3.5 bg-slate-800 hover:bg-slate-700 text-red-400 font-bold rounded-2xl transition cursor-pointer text-xs border border-slate-700 active:scale-95"
               >
                 🚪 กลับสู่หน้าหลัก (Main Menu)
               </button>
@@ -1070,8 +1071,8 @@ export default function FootballCardGame() {
 
       </div>
 
-      <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Main Menu & Manual Room Creation Active.
+      <footer className="w-full text-center py-3 text-[10px] text-slate-500 mt-4 border-t border-slate-900">
+        © 2026 L88PER • Mobile Optimized
       </footer>
 
     </div>
