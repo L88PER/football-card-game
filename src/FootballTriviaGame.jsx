@@ -3,7 +3,6 @@ import './index.css';
 import { supabase } from './supabaseClient';
 
 export default function FootballCardGame() {
-  // ฟังก์ชันช่วยอ่านค่า Cookie
   const getCookie = (name) => {
     const value = `; ${document.cookie}`;
     const parts = value.split(`; ${name}=`);
@@ -11,17 +10,14 @@ export default function FootballCardGame() {
     return '';
   };
 
-  // ฟังก์ชันช่วยตั้งค่า Cookie (หมดอายุเมื่อปิดเบราว์เซอร์ Session Cookie)
   const setCookie = (name, value) => {
     document.cookie = `${name}=${value}; path=/; SameSite=Lax`;
   };
 
-  // ฟังก์ชันลบ Cookie ตอน Logout
   const deleteCookie = (name) => {
     document.cookie = `${name}=; Max-Age=0; path=/; SameSite=Lax`;
   };
 
-  // ดึงค่าเริ่มต้นจาก Cookie ทันทีที่โหลดหน้าจอ
   const [username, setUsername] = useState(() => getAppCookie('fc_username'));
   const [userRole, setUserRole] = useState(() => getAppCookie('fc_role') || 'player');
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!getAppCookie('fc_username'));
@@ -36,11 +32,10 @@ export default function FootballCardGame() {
 
   const [password, setPassword] = useState('');
   const [isAdminRegister, setIsAdminRegister] = useState(false);
-  const [authMode, setAuthMode] = useState('login'); // 'login' หรือ 'register'
+  const [authMode, setAuthMode] = useState('login');
 
-  // ระบบห้องและผู้เล่นในห้อง
   const [roomPlayers, setRoomPlayers] = useState([]);
-  const SINGLE_ROOM_ID = 1; // ล็อกห้องกลางถาวร
+  const SINGLE_ROOM_ID = 1;
 
   const [categories, setCategories] = useState({
     position: [],
@@ -48,32 +43,28 @@ export default function FootballCardGame() {
     nationality: []
   });
 
-  const [gameState, setGameState] = useState('lobby'); // lobby, customize, firstRoundGuess, playing, transition, finished
+  const [gameState, setGameState] = useState('lobby'); // lobby, customize, countdown, playing, transition, finished
+  const [countdownTime, setCountdownTime] = useState(10); // เวลานับถอยหลังก่อนเริ่มเกม 10 วิ
+
   const [tableCards, setTableCards] = useState({
     position: null,
     league: null,
     nationality: null
   });
 
-  const [refreshVotes, setRefreshVotes] = useState([]);
   const [turnPhase, setTurnPhase] = useState('placing'); 
   const [timeLeft, setTimeLeft] = useState(20);
-  
   const [lastPlayedCard, setLastPlayedCard] = useState(null);
-  const [stealingPlayerId, setStealingPlayerId] = useState(null);
   const [winner, setWinner] = useState(null);
   const [feedback, setFeedback] = useState('');
   
   const [transitionTime, setTransitionTime] = useState(5);
-  const [nextPlayerName, setNextPlayerName] = useState('');
-
   const [newValues, setNewValues] = useState({
     position: '',
     league: '',
     nationality: ''
   });
 
-  // โหลดข้อมูล Categories จาก Supabase และจัดการเช็คสถานะห้องเมื่อรีเฟรช
   useEffect(() => {
     loadCategoriesFromDB();
     if (isLoggedIn && username) {
@@ -81,7 +72,6 @@ export default function FootballCardGame() {
     }
   }, []);
 
-  // ฟังก์ชันตรวจสอบและดึงผู้เล่นเข้าห้องอัตโนมัติถ้ามี Cookie ค้างอยู่ตอน Refresh
   const checkAndRestoreSession = async () => {
     const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
     if (activePlayers) {
@@ -97,9 +87,9 @@ export default function FootballCardGame() {
     }
   };
 
-  // Realtime Subscribe สำหรับห้อง Lobby และสถานะเกม
+  // Realtime Subscribe สำหรับซิงค์สถานะห้องและผู้เล่นทั้งหมด
   useEffect(() => {
-    if (isLoggedIn && (gameState === 'lobby' || gameState === 'firstRoundGuess' || gameState === 'playing' || gameState === 'transition' || gameState === 'finished')) {
+    if (isLoggedIn) {
       const channel = supabase.channel(`room-fixed-${SINGLE_ROOM_ID}`)
         .on(
           'postgres_changes', 
@@ -113,9 +103,15 @@ export default function FootballCardGame() {
           { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${SINGLE_ROOM_ID}` }, 
           (payload) => {
             const roomData = payload.new;
-            if (roomData.status === 'playing' && roomData.players_data) {
-              setRoomPlayers(roomData.players_data);
-              setTableCards(roomData.table_cards || tableCards);
+            // ถ้าห้องเปลี่ยนสถานะเป็น countdown หรือ playing ให้ผู้เล่นทุกคนซิงค์ตามทันที
+            if (roomData.status === 'countdown') {
+              if (roomData.players_data) setRoomPlayers(roomData.players_data);
+              if (roomData.table_cards) setTableCards(roomData.table_cards);
+              setGameState('countdown');
+              setCountdownTime(10);
+            } else if (roomData.status === 'playing') {
+              if (roomData.players_data) setRoomPlayers(roomData.players_data);
+              if (roomData.table_cards) setTableCards(roomData.table_cards);
               setGameState('playing');
             }
           }
@@ -128,7 +124,23 @@ export default function FootballCardGame() {
         supabase.removeChannel(channel);
       };
     }
-  }, [isLoggedIn, gameState]);
+  }, [isLoggedIn]);
+
+  // ระบบนับถอยหลัง 10 วินาทีก่อนเข้าเกมจริง (รันทั้ง Host และ Player พร้อมกัน)
+  useEffect(() => {
+    if (gameState !== 'countdown') return;
+
+    const timer = setInterval(() => {
+      setCountdownTime(prev => {
+        if (prev > 1) return prev - 1;
+        // เมื่อนับครบ 10 วิ เปลี่ยนเป็นหน้าเล่นเกม
+        setGameState('playing');
+        return 0;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [gameState]);
 
   const loadCategoriesFromDB = async () => {
     const { data, error } = await supabase
@@ -157,7 +169,6 @@ export default function FootballCardGame() {
     }
   };
 
-  // ฟังก์ชันสมัครสมาชิก
   const handleRegister = async (e) => {
     e.preventDefault();
     const cleanUsername = username.trim();
@@ -196,7 +207,6 @@ export default function FootballCardGame() {
     setIsAdminRegister(false);
   };
 
-  // ฟังก์ชัน Login เข้าสู่ระบบและบันทึก Cookie
   const handleLogin = async (e) => {
     e.preventDefault();
     const cleanUsername = username.trim();
@@ -233,7 +243,6 @@ export default function FootballCardGame() {
 
     const assignedRole = userData.role || 'player';
 
-    // บันทึกลง Cookie
     setCookie('fc_username', cleanUsername);
     setCookie('fc_role', assignedRole);
 
@@ -247,14 +256,9 @@ export default function FootballCardGame() {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) {
       setRoomPlayers(playersData);
-      if (isLoggedIn && username && !playersData.some(p => p.username === username)) {
-        // หากถูกเตะหรือหลุดออกจากห้องแต่ยังเปิดเว็บอยู่
-        checkAndRestoreSession();
-      }
     }
   };
 
-  // ออกจากระบบและลบ Cookie ทิ้ง
   const handleLogoutClean = async () => {
     if (username) {
       await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
@@ -270,7 +274,6 @@ export default function FootballCardGame() {
     setGameState('lobby');
   };
 
-  // ฟังก์ชันอัปโหลดรูปภาพลง Supabase Storage
   const handleImageUpload = async (categoryKey, itemIndex, e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -309,7 +312,6 @@ export default function FootballCardGame() {
     setCategories(updatedCategories);
   };
 
-  // ฟังก์ชันเพิ่มข้อมูลใหม่ลง SQL
   const handleAddItem = async (categoryKey) => {
     const val = newValues[categoryKey].trim();
     if (!val) return;
@@ -350,24 +352,7 @@ export default function FootballCardGame() {
     setNewValues({ ...newValues, [categoryKey]: '' });
   };
 
-  const randomizeTableCards = () => {
-    const posList = categories.position;
-    const leaList = categories.league;
-    const natList = categories.nationality;
-
-    if (posList.length === 0 || leaList.length === 0 || natList.length === 0) {
-      alert('ข้อมูลในการ์ดไม่เพียงพอ กรุณาตรวจสอบฐานข้อมูล');
-      return;
-    }
-
-    setTableCards({
-      position: posList[Math.floor(Math.random() * posList.length)],
-      league: leaList[Math.floor(Math.random() * leaList.length)],
-      nationality: natList[Math.floor(Math.random() * natList.length)]
-    });
-    setRefreshVotes([]);
-  };
-
+  // Host กด Start Game -> สั่งอัปเดตสถานะห้องเป็น 'countdown' เพื่อให้ทุกคนนับถอยหลังพร้อมกัน
   const startGameHost = async () => {
     if (roomPlayers.length < 2) {
       alert('Need at least 2 players to start the game.');
@@ -403,22 +388,23 @@ export default function FootballCardGame() {
     setFeedback('');
     setLastPlayedCard(null);
 
+    // บันทึกลง Supabase ให้ status เป็น 'countdown'
     await supabase.from('rooms').upsert({ 
       id: SINGLE_ROOM_ID,
       name: 'Main Lobby',
       host: roomPlayers[0].username,
-      status: 'playing', 
+      status: 'countdown', 
       players_data: updatedPlayers,
       table_cards: initialTable,
       current_turn: 0
     });
 
-    setGameState('playing');
+    setGameState('countdown');
+    setCountdownTime(10);
   };
 
   const isHost = roomPlayers.length > 0 && roomPlayers[0].username === username;
 
-  // 1. หน้าจอ Login / Register
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-6 font-sans">
@@ -490,7 +476,7 @@ export default function FootballCardGame() {
       
       <div className="flex-1 flex flex-col items-center justify-center">
         
-        {/* 2. Lobby (หน้าห้องรอผู้เล่น & ปุ่มไปหน้า Customize สำหรับ Admin) */}
+        {/* 1. Lobby */}
         {gameState === 'lobby' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
             <h1 className="text-2xl font-bold mb-2 text-emerald-400">Main Game Lobby</h1>
@@ -542,7 +528,21 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* หน้าจอจัดการข้อมูลและอัปโหลดรูปภาพประจำการ์ด (เชื่อม Supabase) */}
+        {/* 2. หน้าจอนับถอยหลัง 10 วินาทีก่อนเข้าเกม */}
+        {gameState === 'countdown' && (
+          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center animate-fadeIn">
+            <h2 className="text-2xl font-bold mb-3 text-emerald-400">🚀 เตรียมตัวให้พร้อม!</h2>
+            <p className="text-slate-300 text-sm mb-6">เกมกำลังจะเริ่มต้นขึ้นในอีก...</p>
+            
+            <div className="text-6xl font-black text-yellow-400 mb-6 animate-pulse">
+              {countdownTime}
+            </div>
+
+            <p className="text-xs text-slate-400 italic">กำลังพาผู้เล่นทุกคนเข้าสู่สนามแข่งขัน...</p>
+          </div>
+        )}
+
+        {/* หน้าจอ Customize (Admin) */}
         {gameState === 'customize' && userRole === 'admin' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-2xl w-full">
             <h2 className="text-2xl font-bold mb-2 text-emerald-400 text-center">⚙️ จัดการข้อมูลและรูปภาพการ์ด (SQL)</h2>
@@ -605,18 +605,6 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* หน้าจอ Transition 5s */}
-        {gameState === 'transition' && (
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center animate-fadeIn">
-            <h2 className="text-2xl font-bold mb-3 text-amber-400">⏳ จบเทิร์นนี้</h2>
-            <p className="text-slate-200 text-lg mb-4 font-medium">{feedback}</p>
-
-            <div className="text-slate-400 text-sm">
-              กำลังเริ่มตาถัดไปใน <span className="text-yellow-400 font-bold text-lg">{transitionTime}</span> วินาที...
-            </div>
-          </div>
-        )}
-
         {/* หน้าจอเล่นเกมปกติ */}
         {gameState === 'playing' && (
           <div className="max-w-4xl w-full flex flex-col gap-6">
@@ -660,21 +648,6 @@ export default function FootballCardGame() {
               </div>
             </div>
 
-          </div>
-        )}
-
-        {/* หน้าจอจบเกม */}
-        {gameState === 'finished' && (
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
-            <h2 className="text-3xl font-bold mb-2 text-emerald-400">🎉 Winner!</h2>
-            <p className="text-xl text-yellow-400 font-bold mb-6">{winner?.name} wins the game!</p>
-            
-            <button 
-              onClick={() => setGameState('lobby')}
-              className="w-full mt-4 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer"
-            >
-              Back to Lobby
-            </button>
           </div>
         )}
 
