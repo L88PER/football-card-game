@@ -398,7 +398,6 @@ export default function FootballCardGame() {
       return;
     }
 
-    // ตรวจสอบซ้ำอีกรอบเพื่อความปลอดภัยป้องกันการแย่งสมัคร Admin
     let roleToAssign = 'player';
     if (isAdminRegister) {
       const { data: checkAdmin } = await supabase.from('users').select('username').eq('role', 'admin');
@@ -567,8 +566,9 @@ export default function FootballCardGame() {
     }).eq('id', SINGLE_ROOM_ID);
   };
 
-  const handleOwnerAnswerCorrect = async () => {
-    if (isPaused || !isMyTurn) return;
+  // ให้ Admin เป็นคนกดตัดสินว่าตอบถูก (+1 คะแนน และเช็คว่าชนะหรือยัง)
+  const handleAdminAnswerCorrect = async () => {
+    if (userRole !== 'admin') return;
     const player = roomPlayers[currentTurn];
     const newScore = (player.score || 0) + 1;
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: newScore } : p);
@@ -598,8 +598,9 @@ export default function FootballCardGame() {
     }).eq('id', SINGLE_ROOM_ID);
   };
 
-  const handleOwnerAnswerWrong = async () => {
-    if (isPaused || !isMyTurn) return;
+  // ให้ Admin เป็นคนกดตัดสินว่าตอบผิด (-1 คะแนน และเปลี่ยนเทิร์น)
+  const handleAdminAnswerWrong = async () => {
+    if (userRole !== 'admin') return;
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: (p.score || 0) - 1 } : p);
     
     const nextTurn = (currentTurn + 1) % roomPlayers.length;
@@ -851,19 +852,17 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* Countdown with 5s Loading Bar & Rotating Football */}
+        {/* Countdown */}
         {gameState === 'countdown' && (
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl w-full text-center">
             <h2 className="text-lg font-black mb-1 text-emerald-400">🚀 เตรียมตัวให้พร้อม!</h2>
             <p className="text-slate-400 text-xs mb-8">กำลังเข้าสู่สนามแข่งขัน...</p>
             
-            {/* Large Loading Bar (0% to 100% in 5s) */}
             <div className="relative w-full bg-slate-950 h-7 rounded-full overflow-visible p-1 border border-slate-800 mb-4 shadow-inner">
               <div 
                 className="bg-gradient-to-r from-emerald-600 to-teal-400 h-full rounded-full transition-all duration-1000 ease-linear shadow-lg relative"
                 style={{ width: `${(countdownTime / 5) * 100}%` }}
               >
-                {/* Rotating Football at the tip */}
                 <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-8 h-8 bg-slate-900 rounded-full border-2 border-emerald-400 flex items-center justify-center text-base shadow-lg animate-spin">
                   ⚽
                 </div>
@@ -933,7 +932,7 @@ export default function FootballCardGame() {
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow flex flex-col items-center justify-center relative">
               <div className="absolute top-3 right-3 bg-slate-800 border border-slate-700 px-2.5 py-0.5 rounded-full text-yellow-400 font-bold text-[11px]">
                 {turnPhase === 'answering' ? (
-                  <span className="text-emerald-400">🎤 ช่วงตอบคำถาม</span>
+                  <span className="text-emerald-400">🎤 รอ Admin ตัดสิน</span>
                 ) : (
                   `⏳ ${timeLeft}s`
                 )}
@@ -979,23 +978,26 @@ export default function FootballCardGame() {
                 </div>
               )}
 
-              {isMyTurn && turnPhase === 'answering' && (
+              {/* ส่วนตัดสินคำตอบ: เฉพาะ Admin เท่านั้นที่กดปุ่มถูก/ผิดได้ */}
+              {turnPhase === 'answering' && (
                 <div className="text-center bg-slate-800 border border-slate-700 p-3.5 rounded-2xl w-full mt-3.5">
-                  <p className="text-yellow-300 text-xs font-bold mb-2">🎤 คุณกำลังตอบชื่อนักเตะ</p>
-                  <div className="flex gap-2 justify-center">
-                    <button onClick={handleOwnerAnswerCorrect} className="flex-1 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl text-xs shadow cursor-pointer">
-                      ✅ ตอบถูก (+1)
-                    </button>
-                    <button onClick={handleOwnerAnswerWrong} className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-xs shadow cursor-pointer">
-                      ❌ ตอบผิด (-1)
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {!isMyTurn && turnPhase === 'answering' && (
-                <div className="text-center text-slate-300 text-xs italic mt-3.5">
-                  🎤 <span className="text-white font-bold">{roomPlayers[currentTurn]?.username}</span> กำลังตอบคำถาม...
+                  {userRole === 'admin' ? (
+                    <>
+                      <p className="text-yellow-300 text-xs font-bold mb-2">🛡️ [Admin] ตัดสินคำตอบของ {roomPlayers[currentTurn]?.username}</p>
+                      <div className="flex gap-2 justify-center">
+                        <button onClick={handleAdminAnswerCorrect} className="flex-1 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl text-xs shadow cursor-pointer">
+                          ✅ ตอบถูก (+1)
+                        </button>
+                        <button onClick={handleAdminAnswerWrong} className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-xs shadow cursor-pointer">
+                          ❌ ตอบผิด (-1)
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-yellow-300 text-xs font-bold animate-pulse py-2">
+                      ⏳ กำลังรอ Admin ตัดสินคำตอบ...
+                    </p>
+                  )}
                 </div>
               )}
             </div>
