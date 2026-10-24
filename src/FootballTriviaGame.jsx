@@ -100,20 +100,34 @@ export default function FootballCardGame() {
   };
 
   const joinRoomProcess = async (uname) => {
-    const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
-    if (activePlayers) {
-      const existingPlayer = activePlayers.find(p => p.username.toLowerCase() === uname.toLowerCase());
-      if (!existingPlayer) {
-        if (activePlayers.length >= 4) {
-          alert('ห้องเต็มแล้ว (สูงสุด 4 คน)');
-          return false;
-        }
-        await supabase.from('room_players').insert([{ 
-          room_id: SINGLE_ROOM_ID, 
-          username: uname, 
-          score: 0, 
-          hand: [] 
-        }]);
+    const { data: activePlayers, error: fetchErr } = await supabase
+      .from('room_players')
+      .select('*')
+      .eq('room_id', SINGLE_ROOM_ID);
+
+    if (fetchErr) {
+      console.error('Error fetching players:', fetchErr);
+      return false;
+    }
+
+    const existingPlayer = activePlayers?.find(p => p.username.toLowerCase() === uname.toLowerCase());
+    
+    if (!existingPlayer) {
+      if (activePlayers && activePlayers.length >= 4) {
+        alert('ห้องเต็มแล้ว (สูงสุด 4 คน)');
+        return false;
+      }
+      const { error: insertErr } = await supabase.from('room_players').insert([{ 
+        room_id: SINGLE_ROOM_ID, 
+        username: uname, 
+        score: 0, 
+        hand: [] 
+      }]);
+
+      if (insertErr) {
+        console.error('Error inserting player:', insertErr);
+        alert('ไม่สามารถเข้าห้องได้');
+        return false;
       }
     }
     await fetchRoomPlayers(SINGLE_ROOM_ID);
@@ -127,7 +141,6 @@ export default function FootballCardGame() {
     }
   };
 
-  // Realtime Subscription สำหรับตาราง room_players (อัปเดตรายชื่อผู้เล่นทันทีเมื่อมีคนเข้า/ออก)
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -148,7 +161,6 @@ export default function FootballCardGame() {
     };
   }, [isLoggedIn]);
 
-  // Polling กลางสำหรับซิงค์สถานะห้อง
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -167,9 +179,8 @@ export default function FootballCardGame() {
         return;
       }
 
-      // ตรวจสอบว่า Admin ยังอยู่ในห้องจริงไหม (ถ้า Admin ออก ให้ลบห้องทิ้ง)
       const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
-      if (activePlayers) {
+      if (activePlayers && activePlayers.length > 0) {
         const adminStillInRoom = activePlayers.some(p => p.username.toLowerCase() === roomData.host?.toLowerCase());
         if (!adminStillInRoom) {
           await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
@@ -183,7 +194,6 @@ export default function FootballCardGame() {
 
       syncGameState(roomData);
 
-      // ถ้าอยู่ในหน้า Lobby ให้ดึงรายชื่อผู้เล่นสดๆ ตลอดเวลา
       if (gameState === 'lobby') {
         fetchRoomPlayers(SINGLE_ROOM_ID);
       }
@@ -780,7 +790,7 @@ export default function FootballCardGame() {
               <div className="space-y-2">
                 {roomPlayers.map((p, idx) => (
                   <div key={idx} className="flex justify-between items-center bg-slate-800/80 px-3.5 py-2.5 rounded-xl text-xs font-semibold border border-slate-700/50">
-                    <span>{p.username === roomPlayers[0]?.username ? '👑 Admin' : '👤 Player'}</span>
+                    <span>{idx === 0 ? '👑 Admin' : '👤 Player'}</span>
                     <span className="text-emerald-400 font-bold">{p.username}</span>
                   </div>
                 ))}
