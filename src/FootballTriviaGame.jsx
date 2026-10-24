@@ -44,7 +44,7 @@ export default function FootballCardGame() {
   });
 
   const [gameState, setGameState] = useState('mainMenu'); 
-  const [countdownTime, setCountdownTime] = useState(10);
+  const [countdownTime, setCountdownTime] = useState(0); // เริ่มนับจาก 0 ไปถึง 10
   const [initialPlayerCount, setInitialPlayerCount] = useState(0);
 
   const [currentTurn, setCurrentTurn] = useState(0); 
@@ -290,6 +290,7 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
   };
 
+  // ตัวจัดการเวลา Countdown (จาก 0 ไปถึง 10) เฉพาะ Admin
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
     if (isPaused) return;
@@ -297,8 +298,8 @@ export default function FootballCardGame() {
 
     const timer = setInterval(async () => {
       if (gameState === 'countdown') {
-        if (countdownTime > 1) {
-          const nextCount = countdownTime - 1;
+        if (countdownTime < 10) {
+          const nextCount = countdownTime + 1;
           setCountdownTime(nextCount);
           await supabase.from('rooms').update({ countdown_time: nextCount }).eq('id', SINGLE_ROOM_ID);
         } else {
@@ -308,7 +309,8 @@ export default function FootballCardGame() {
           await supabase.from('rooms').update({ 
             status: 'playing', 
             time_left: 20, 
-            turn_phase: 'placing' 
+            turn_phase: 'placing',
+            countdown_time: 0 
           }).eq('id', SINGLE_ROOM_ID);
         }
       } else if (gameState === 'playing') {
@@ -629,7 +631,7 @@ export default function FootballCardGame() {
     setCurrentTurn(0);
     setWinner(null);
     setIsPaused(false);
-    setCountdownTime(10);
+    setCountdownTime(0); // เริ่มที่ 0
     setGameState('countdown');
 
     await supabase.from('rooms').upsert({ 
@@ -637,7 +639,7 @@ export default function FootballCardGame() {
       name: 'Main Lobby',
       host: username,
       status: 'countdown', 
-      countdown_time: 10,
+      countdown_time: 0,
       players_data: updatedPlayers,
       table_cards: initialTable,
       current_turn: 0,
@@ -825,21 +827,26 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* Countdown with Loading Bar */}
+        {/* Countdown with Large Loading Bar (0 to 10 with Rotating Football) */}
         {gameState === 'countdown' && (
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl w-full text-center">
-            <h2 className="text-lg font-black mb-2 text-emerald-400">🚀 เตรียมตัวให้พร้อม!</h2>
-            <p className="text-slate-400 text-xs mb-6">เกมกำลังจะเริ่มต้นขึ้น...</p>
+            <h2 className="text-lg font-black mb-1 text-emerald-400">🚀 เตรียมตัวให้พร้อม!</h2>
+            <p className="text-slate-400 text-xs mb-8">กำลังเข้าสู่สนามแข่งขัน...</p>
             
-            {/* Loading Bar Animation */}
-            <div className="w-full bg-slate-950 h-4 rounded-full overflow-hidden p-0.5 border border-slate-800 mb-6">
+            {/* Large Loading Bar (0% to 100%) */}
+            <div className="relative w-full bg-slate-950 h-7 rounded-full overflow-visible p-1 border border-slate-800 mb-6 shadow-inner">
               <div 
-                className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full rounded-full transition-all duration-1000 ease-linear shadow-lg"
+                className="bg-gradient-to-r from-emerald-600 to-teal-400 h-full rounded-full transition-all duration-1000 ease-linear shadow-lg relative"
                 style={{ width: `${(countdownTime / 10) * 100}%` }}
-              ></div>
+              >
+                {/* Rotating Football at the tip */}
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-8 h-8 bg-slate-900 rounded-full border-2 border-emerald-400 flex items-center justify-center text-base shadow-lg animate-spin">
+                  ⚽
+                </div>
+              </div>
             </div>
 
-            <p className="text-[11px] text-slate-500 italic">กำลังพาผู้เล่นเข้าสู่สนามแข่งขัน...</p>
+            <p className="text-xs font-bold text-yellow-400">{countdownTime} / 10 วินาที</p>
           </div>
         )}
 
