@@ -23,6 +23,38 @@ export default function FootballCardGame() {
     loadCategoriesFromDB();
   }, []);
 
+  // เมื่อ Login สำเร็จ ให้เชื่อมต่อ Realtime ฟังการเปลี่ยนแปลงในห้องทันที
+  useEffect(() => {
+    if (isLoggedIn) {
+      const channel = supabase.channel(`room-fixed-${SINGLE_ROOM_ID}`)
+        .on(
+          'postgres_changes', 
+          { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${SINGLE_ROOM_ID}` }, 
+          (payload) => {
+            console.log('Player change detected:', payload);
+            fetchRoomPlayers(SINGLE_ROOM_ID);
+          }
+        )
+        .on(
+          'postgres_changes', 
+          { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${SINGLE_ROOM_ID}` }, 
+          (payload) => {
+            if (payload.new.status === 'playing') {
+              setView('game');
+            }
+          }
+        )
+        .subscribe();
+
+      // โหลดข้อมูลผู้เล่นรอบแรกทันทีตอนเข้าห้อง
+      fetchRoomPlayers(SINGLE_ROOM_ID);
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
+  }, [isLoggedIn]);
+
   const loadCategoriesFromDB = async () => {
     const { data } = await supabase.from('category_items').select(`id, item_value, image_url, categories (key_name)`);
     if (data && data.length > 0) {
@@ -55,7 +87,6 @@ export default function FootballCardGame() {
     const { data: existingUser } = await supabase.from('users').select('*').eq('username', cleanUsername).single();
 
     if (!existingUser) {
-      // If user doesn't exist, register them into the users table
       const { error: regError } = await supabase.from('users').insert([{ username: cleanUsername, password }]);
       if (regError) {
         alert('Failed to register user.');
@@ -92,32 +123,14 @@ export default function FootballCardGame() {
 
     setIsLoggedIn(true);
     setView('lobby');
-    subscribeRoom(SINGLE_ROOM_ID);
-  };
-
-  // Realtime Subscribe for the fixed room
-  const subscribeRoom = (roomId) => {
-    const channel = supabase.channel(`room-fixed-${roomId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` }, () => {
-        fetchRoomPlayers(roomId);
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, (payload) => {
-        if (payload.new.status === 'playing') {
-          setView('game');
-        }
-      })
-      .subscribe();
-
-    fetchRoomPlayers(roomId);
-    return () => { supabase.removeChannel(channel); };
   };
 
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) {
       setRoomPlayers(playersData);
-      // If current user was somehow removed from room, force logout
-      if (isLoggedIn && !playersData.some(p => p.username === username)) {
+      // หากผู้เล่นคนนี้ถูกเตะออกหรือไม่มีชื่อในห้องแล้ว ให้เด้งออก
+      if (username && !playersData.some(p => p.username === username)) {
         handleLogoutClean();
       }
     }
