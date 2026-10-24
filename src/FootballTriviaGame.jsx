@@ -44,21 +44,24 @@ export default function FootballCardGame() {
   });
 
   const [gameState, setGameState] = useState('lobby'); // lobby, customize, countdown, playing, transition, finished
-  const [countdownTime, setCountdownTime] = useState(10); // เวลานับถอยหลังก่อนเริ่มเกม 10 วิ
+  const [countdownTime, setCountdownTime] = useState(10);
 
+  const [currentTurn, setCurrentTurn] = useState(0); 
   const [tableCards, setTableCards] = useState({
     position: null,
     league: null,
     nationality: null
   });
 
-  const [turnPhase, setTurnPhase] = useState('placing'); 
+  const [turnPhase, setTurnPhase] = useState('placing'); // placing, answering, stealing, paused
   const [timeLeft, setTimeLeft] = useState(20);
   const [lastPlayedCard, setLastPlayedCard] = useState(null);
+  const [stealingPlayerId, setStealingPlayerId] = useState(null);
   const [winner, setWinner] = useState(null);
   const [feedback, setFeedback] = useState('');
   
   const [transitionTime, setTransitionTime] = useState(5);
+  const [nextPlayerName, setNextPlayerName] = useState('');
   const [newValues, setNewValues] = useState({
     position: '',
     league: '',
@@ -87,7 +90,7 @@ export default function FootballCardGame() {
     }
   };
 
-  // 1. ระบบ Realtime Subscribe สำหรับซิงค์ผู้เล่น
+  // 1. Realtime Subscribe สำหรับซิงค์ผู้เล่น
   useEffect(() => {
     if (isLoggedIn) {
       const channel = supabase.channel(`room-fixed-${SINGLE_ROOM_ID}`)
@@ -108,7 +111,7 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // 2. ระบบ Polling เช็คสถานะห้องทุกๆ 1 วินาที (แก้ปัญหาฝั่ง Player ไม่ยอมเปลี่ยนหน้าตาม Host)
+  // 2. Polling เช็คสถานะห้องทุกๆ 1 วินาที
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -136,7 +139,7 @@ export default function FootballCardGame() {
     return () => clearInterval(roomInterval);
   }, [isLoggedIn, gameState]);
 
-  // ระบบนับถอยหลัง 10 วินาทีก่อนเข้าเกมจริง (รันเฉพาะตอนอยู่หน้า countdown)
+  // นับถอยหลัง 10 วิ ก่อนเข้าเกม
   useEffect(() => {
     if (gameState !== 'countdown') return;
 
@@ -150,6 +153,72 @@ export default function FootballCardGame() {
 
     return () => clearInterval(timer);
   }, [gameState]);
+
+  // ควบคุม Timer ในหน้าเล่นเกม (Placing 20s และ Stealing 10s)
+  useEffect(() => {
+    if (gameState !== 'playing') return;
+    if (turnPhase === 'answering') return;
+
+    const timer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev > 1) return prev - 1;
+
+        if (turnPhase === 'placing') {
+          triggerTransition('หมดเวลาวางการ์ด (20s)! เทิร์นตกไปผู้เล่นถัดไป');
+          return 0;
+        } else if (turnPhase === 'stealing') {
+          handleNoStealTimeout();
+          return 0;
+        }
+        return 0;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [gameState, turnPhase, currentTurn, lastPlayedCard]);
+
+  // หน้าจอ Transition ระหว่างเทิร์น (5 วิ)
+  useEffect(() => {
+    if (gameState !== 'transition') return;
+
+    const transTimer = setInterval(() => {
+      setTransitionTime(prev => {
+        if (prev > 1) return prev - 1;
+        
+        setCurrentTurn(nextTurnIdx);
+        setStealingPlayerId(null);
+        setFeedback('');
+        setLastPlayedCard(null);
+        setTurnPhase('placing');
+        setTimeLeft(20);
+        setGameState('playing');
+        return 0;
+      });
+    }, 1000);
+
+    return () => clearInterval(transTimer);
+  }, [gameState]);
+
+  const nextTurnIdx = roomPlayers.length > 0 ? (currentTurn + 1) % roomPlayers.length : 0;
+
+  const triggerTransition = (msg) => {
+    setFeedback(msg);
+    if (roomPlayers.length > 0) {
+      setNextPlayerName(roomPlayers[nextTurnIdx]?.username || roomPlayers[nextTurnIdx]?.name);
+    }
+    setTransitionTime(5);
+    setGameState('transition');
+  };
+
+  const handleNoStealTimeout = () => {
+    if (lastPlayedCard && roomPlayers[currentTurn]) {
+      const player = roomPlayers[currentTurn];
+      const returnedHand = [...(player.hand || []), lastPlayedCard];
+      setRoomPlayers(roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, hand: returnedHand } : p));
+      setLastPlayedCard(null);
+    }
+    triggerTransition(`ตอบไม่ได้และไม่มีคน Steal (-1 คะแนน, การ์ดกลับเข้ามือ)`);
+  };
 
   const loadCategoriesFromDB = async () => {
     const { data, error } = await supabase
@@ -361,7 +430,89 @@ export default function FootballCardGame() {
     setNewValues({ ...newValues, [categoryKey]: '' });
   };
 
-  // Host กด Start Game -> อัปเดตสถานะห้องเป็น 'countdown'
+  // ลอจิกการเล่นเกม (วางการ์ด, ตอบถูก/ผิด, Steal)
+  const handleSelectCard = (cardIdx) => {
+    if (turnPhase !== 'placing') return;
+    executePlayCard(cardIdx);
+  };
+
+  const executePlayCard = (cardIdx) => {
+    const player = roomPlayers[currentTurn];
+    const card = player.hand[cardIdx];
+
+    setLastPlayedCard(card);
+    setTableCards(prev => ({
+      ...prev,
+      [card.type]: card
+    }));
+
+    const updatedHand = player.hand.filter((_, idx) => idx !== cardIdx);
+    setRoomPlayers(roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, hand: updatedHand } : p));
+
+    setFeedback('');
+    setTurnPhase('answering');
+  };
+
+  const handleSkipTurn = () => {
+    if (turnPhase !== 'placing') return;
+    setTurnPhase('paused'); 
+    triggerTransition(`${roomPlayers[currentTurn]?.username || roomPlayers[currentTurn]?.name} ข้ามเทิร์น`);
+  };
+
+  const handleOwnerAnswerCorrect = () => {
+    const player = roomPlayers[currentTurn];
+    const newScore = (player.score || 0) + 1;
+    setLastPlayedCard(null);
+    updateScoreAndCheckWin(currentTurn, newScore, `${player.username || player.name} ตอบถูก! (+1 คะแนน)`);
+  };
+
+  const handleOwnerAnswerWrong = () => {
+    const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: (p.score || 0) - 1 } : p);
+    setRoomPlayers(updatedPlayers);
+    setTurnPhase('stealing');
+    setTimeLeft(10);
+  };
+
+  const handleStealClick = (playerId) => {
+    setStealingPlayerId(playerId);
+  };
+
+  const handleStealCorrect = () => {
+    const pIdx = roomPlayers.findIndex(p => p.id === stealingPlayerId || p.username === stealingPlayerId);
+    const stealingPlayer = roomPlayers[pIdx];
+    const newScore = (stealingPlayer.score || 0) + 1;
+    
+    const updatedPlayers = roomPlayers.map((p, idx) => idx === pIdx ? { ...p, score: newScore } : p);
+    setRoomPlayers(updatedPlayers);
+    
+    setLastPlayedCard(null);
+    triggerTransition(`${stealingPlayer.username || stealingPlayer.name} Steal สำเร็จ! (+1 คะแนน)`);
+  };
+
+  const handleStealWrong = () => {
+    const pIdx = roomPlayers.findIndex(p => p.id === stealingPlayerId || p.username === stealingPlayerId);
+    const stealingPlayer = roomPlayers[pIdx];
+    const updatedPlayers = roomPlayers.map((p, idx) => idx === pIdx ? { ...p, score: (p.score || 0) - 1 } : p);
+    setRoomPlayers(updatedPlayers);
+    
+    setLastPlayedCard(null);
+    triggerTransition(`${stealingPlayer.username || stealingPlayer.name} Steal ผิด! (-1 คะแนน)`);
+  };
+
+  const updateScoreAndCheckWin = (playerIdx, newScore, msg) => {
+    const updatedPlayers = roomPlayers.map((p, idx) => idx === playerIdx ? { ...p, score: newScore } : p);
+    setRoomPlayers(updatedPlayers);
+
+    const currentPlayer = updatedPlayers[playerIdx];
+
+    if (newScore >= 3 && currentPlayer.hand?.length === 0) {
+      setWinner(currentPlayer);
+      setGameState('finished');
+    } else {
+      triggerTransition(msg);
+    }
+  };
+
   const startGameHost = async () => {
     if (roomPlayers.length < 2) {
       alert('Need at least 2 players to start the game.');
@@ -379,7 +530,7 @@ export default function FootballCardGame() {
           hand.push({ type: randomKey, value: randomItem.value, image: randomItem.image });
         }
       }
-      return { id: idx + 1, name: p.username || p.name, score: 0, hand };
+      return { id: idx + 1, username: p.username || p.name, name: p.username || p.name, score: 0, hand };
     });
 
     const posList = categories.position;
@@ -393,6 +544,7 @@ export default function FootballCardGame() {
 
     setRoomPlayers(updatedPlayers);
     setTableCards(initialTable);
+    setCurrentTurn(0);
     setWinner(null);
     setFeedback('');
     setLastPlayedCard(null);
@@ -536,7 +688,7 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* 2. หน้าจอนับถอยหลัง 10 วินาทีก่อนเข้าเกม */}
+        {/* 2. หน้าจอนับถอยหลัง 10 วินาที */}
         {gameState === 'countdown' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center animate-fadeIn">
             <h2 className="text-2xl font-bold mb-3 text-emerald-400">🚀 เตรียมตัวให้พร้อม!</h2>
@@ -547,6 +699,155 @@ export default function FootballCardGame() {
             </div>
 
             <p className="text-xs text-slate-400 italic">กำลังพาผู้เล่นทุกคนเข้าสู่สนามแข่งขัน...</p>
+          </div>
+        )}
+
+        {/* หน้าจอ Transition 5s */}
+        {gameState === 'transition' && (
+          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center animate-fadeIn">
+            <h2 className="text-2xl font-bold mb-3 text-amber-400">⏳ จบเทิร์นนี้</h2>
+            <p className="text-slate-200 text-lg mb-4 font-medium">{feedback}</p>
+
+            <div className="text-slate-400 text-sm">
+              กำลังเริ่มตาถัดไปใน <span className="text-yellow-400 font-bold text-lg">{transitionTime}</span> วินาที...
+            </div>
+          </div>
+        )}
+
+        {/* หน้าจอเล่นเกมปกติ (มีปุ่มวางการ์ด ปุ่มตอบ และปุ่ม Steal ครบถ้วน) */}
+        {gameState === 'playing' && (
+          <div className="max-w-4xl w-full flex flex-col gap-6">
+            
+            <div className="flex justify-between items-center bg-slate-800 p-4 rounded-xl shadow">
+              <div>
+                <span className="text-slate-400 text-sm">Current Turn:</span>
+                <div className="text-xl font-bold text-emerald-400">{roomPlayers[currentTurn]?.username || roomPlayers[currentTurn]?.name}</div>
+              </div>
+              <div className="flex gap-4">
+                {roomPlayers.map((p, idx) => (
+                  <div key={idx} className={`text-center px-3 py-1 rounded-lg ${idx === currentTurn ? 'bg-emerald-500/20 border border-emerald-500' : ''}`}>
+                    <div className="text-xs text-slate-400">{p.username || p.name}</div>
+                    <div className={`text-lg font-bold ${(p.score || 0) < 0 ? 'text-red-400' : 'text-yellow-400'}`}>
+                      {p.score || 0} pts ({p.hand?.length || 0} cards)
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-slate-800 p-6 rounded-xl shadow flex flex-col items-center justify-center relative">
+              <div className="absolute top-4 right-4 bg-slate-700 px-3 py-1 rounded-full text-yellow-400 font-bold text-sm">
+                {turnPhase === 'answering' ? (
+                  <span className="text-emerald-400">🎤 Answer Phase (No Time Limit)</span>
+                ) : (
+                  `⏳ Time: ${timeLeft}s (${turnPhase === 'placing' ? 'Think & Place (20s)' : 'Steal Phase (10s)'})`
+                )}
+              </div>
+
+              <h3 className="text-slate-400 mb-4">Table Conditions (Guess a player matching all 3!)</h3>
+              <div className="flex gap-4 flex-wrap justify-center mb-6">
+                {['position', 'league', 'nationality'].map((type) => {
+                  const card = tableCards[type];
+                  return (
+                    <div key={type} className="bg-emerald-600 p-4 rounded-lg shadow-md text-center min-w-[130px] flex flex-col items-center">
+                      <div className="text-xs text-emerald-200 uppercase">{type}</div>
+                      <div className="w-12 h-12 my-2 bg-emerald-700 rounded-lg overflow-hidden flex items-center justify-center border border-emerald-400/50 shadow-inner">
+                        {card?.image ? (
+                          <img src={card.image} alt={card.value} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-xs text-emerald-200">⚽</span>
+                        )}
+                      </div>
+                      <div className="text-sm font-bold mt-1">{card?.value || '-'}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {turnPhase === 'placing' && (
+                <div className="text-center">
+                  <p className="text-emerald-300 font-medium mb-2 animate-pulse">
+                    👉 {roomPlayers[currentTurn]?.username || roomPlayers[currentTurn]?.name} เลือกการ์ดในมือเพื่อวางลงโต๊ะ (ภายใน {timeLeft} วินาที)
+                  </p>
+                  <button 
+                    onClick={handleSkipTurn}
+                    className="px-4 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs cursor-pointer border border-slate-600"
+                  >
+                    ไม่มีการ์ดลง / ข้ามเทิร์น
+                  </button>
+                </div>
+              )}
+
+              {turnPhase === 'answering' && (
+                <div className="text-center bg-slate-700/80 p-4 rounded-xl w-full">
+                  <p className="text-yellow-300 font-bold mb-2">🎤 {roomPlayers[currentTurn]?.username || roomPlayers[currentTurn]?.name} กำลังตอบชื่อนักเตะ (ไม่จำกัดเวลา)</p>
+                  <div className="flex gap-3 justify-center">
+                    <button onClick={handleOwnerAnswerCorrect} className="px-4 py-2 bg-green-600 hover:bg-green-500 font-bold rounded-lg text-sm cursor-pointer">
+                      ตอบถูก (+1 คะแนน)
+                    </button>
+                    <button onClick={handleOwnerAnswerWrong} className="px-4 py-2 bg-red-600 hover:bg-red-500 font-bold rounded-lg text-sm cursor-pointer">
+                      ตอบผิด (-1 คะแนน)
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {turnPhase === 'stealing' && !stealingPlayerId && (
+                <div className="text-center bg-amber-500/20 border border-amber-500/50 p-4 rounded-xl w-full">
+                  <p className="text-amber-300 font-bold mb-2">⚡ เจ้าของเทิร์นตอบผิด! ผู้เล่นคนอื่นกด Steal เพื่อแย่งตอบได้ ({timeLeft}s)</p>
+                  <div className="flex gap-3 justify-center flex-wrap">
+                    {roomPlayers.filter((_, idx) => idx !== currentTurn).map(p => (
+                      <button key={p.id} onClick={() => handleStealClick(p.id)} className="px-4 py-2 bg-amber-600 hover:bg-amber-500 font-bold rounded-lg text-sm cursor-pointer">
+                        {p.username || p.name} Steal!
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {stealingPlayerId && (
+                <div className="text-center bg-slate-700 p-4 rounded-xl w-full">
+                  <p className="text-yellow-300 font-bold mb-2">⚡ {roomPlayers.find(p => p.id === stealingPlayerId || p.username === stealingPlayerId)?.username || roomPlayers.find(p => p.id === stealingPlayerId || p.username === stealingPlayerId)?.name} กำลังแย่งตอบ (Steal)!</p>
+                  <div className="flex gap-3 justify-center">
+                    <button onClick={handleStealCorrect} className="px-4 py-2 bg-green-600 hover:bg-green-500 font-bold rounded-lg text-sm cursor-pointer">
+                      Steal สำเร็จ (+1)
+                    </button>
+                    <button onClick={handleStealWrong} className="px-4 py-2 bg-red-600 hover:bg-red-500 font-bold rounded-lg text-sm cursor-pointer">
+                      Steal ผิด (-1)
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-slate-800 p-4 rounded-xl shadow">
+              <h4 className="font-bold mb-3 text-emerald-300">
+                Hand of <span className="text-yellow-400">{roomPlayers[currentTurn]?.username || roomPlayers[currentTurn]?.name}</span> 
+                {turnPhase === 'placing' ? ' (Click card to play)' : ''}
+              </h4>
+              <div className="flex gap-3 overflow-x-auto pb-2">
+                {roomPlayers[currentTurn]?.hand?.map((card, idx) => (
+                  <div 
+                    key={idx} 
+                    onClick={() => turnPhase === 'placing' && handleSelectCard(idx)}
+                    className={`p-3 rounded-lg min-w-[120px] text-center transition transform flex flex-col items-center ${
+                      turnPhase === 'placing' ? 'bg-slate-700 hover:bg-slate-600 cursor-pointer hover:-translate-y-1 border border-emerald-500/50' : 'bg-slate-800 opacity-50'
+                    }`}
+                  >
+                    <div className="text-[10px] text-slate-400 uppercase">{card.type}</div>
+                    <div className="w-10 h-10 my-1 bg-slate-800 rounded overflow-hidden flex items-center justify-center border border-slate-600">
+                      {card.image ? (
+                        <img src={card.image} alt={card.value} className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-xs">⚽</span>
+                      )}
+                    </div>
+                    <div className="text-xs font-bold text-white mt-1">{card.value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
           </div>
         )}
 
@@ -613,49 +914,18 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* หน้าจอเล่นเกมปกติ */}
-        {gameState === 'playing' && (
-          <div className="max-w-4xl w-full flex flex-col gap-6">
+        {/* หน้าจอจบเกม */}
+        {gameState === 'finished' && (
+          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+            <h2 className="text-3xl font-bold mb-2 text-emerald-400">🎉 Winner!</h2>
+            <p className="text-xl text-yellow-400 font-bold mb-6">{winner?.username || winner?.name} wins the game!</p>
             
-            <div className="flex justify-between items-center bg-slate-800 p-4 rounded-xl shadow">
-              <div>
-                <span className="text-slate-400 text-sm">Room Status:</span>
-                <div className="text-xl font-bold text-emerald-400">Active Match</div>
-              </div>
-              <div className="flex gap-4">
-                {roomPlayers.map((p, idx) => (
-                  <div key={idx} className={`text-center px-3 py-1 rounded-lg`}>
-                    <div className="text-xs text-slate-400">{p.username || p.name}</div>
-                    <div className={`text-lg font-bold ${(p.score || 0) < 0 ? 'text-red-400' : 'text-yellow-400'}`}>
-                      {p.score || 0} pts ({p.hand?.length || 0} cards)
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-slate-800 p-6 rounded-xl shadow flex flex-col items-center justify-center relative">
-              <h3 className="text-slate-400 mb-4">Table Conditions (Guess a player matching all 3!)</h3>
-              <div className="flex gap-4 flex-wrap justify-center mb-6">
-                {['position', 'league', 'nationality'].map((type) => {
-                  const card = tableCards[type];
-                  return (
-                    <div key={type} className="bg-emerald-600 p-4 rounded-lg shadow-md text-center min-w-[130px] flex flex-col items-center">
-                      <div className="text-xs text-emerald-200 uppercase">{type}</div>
-                      <div className="w-12 h-12 my-2 bg-emerald-700 rounded-lg overflow-hidden flex items-center justify-center border border-emerald-400/50 shadow-inner">
-                        {card?.image ? (
-                          <img src={card.image} alt={card.value} className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="text-xs text-emerald-200">⚽</span>
-                        )}
-                      </div>
-                      <div className="text-sm font-bold mt-1">{card?.value || '-'}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
+            <button 
+              onClick={() => setGameState('lobby')}
+              className="w-full mt-4 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer"
+            >
+              Back to Lobby
+            </button>
           </div>
         )}
 
