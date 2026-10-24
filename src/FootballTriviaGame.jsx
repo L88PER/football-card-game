@@ -56,13 +56,13 @@ export default function FootballCardGame() {
 
   const [turnPhase, setTurnPhase] = useState('placing'); 
   const [timeLeft, setTimeLeft] = useState(20);
+  const [isPaused, setIsPaused] = useState(false); // สถานะหยุดเกม
   const [lastPlayedCard, setLastPlayedCard] = useState(null);
   const [stealingPlayerId, setStealingPlayerId] = useState(null);
   const [winner, setWinner] = useState(null);
   const [feedback, setFeedback] = useState('');
   
   const [transitionTime, setTransitionTime] = useState(5);
-  const [nextPlayerName, setNextPlayerName] = useState('');
   const [newValues, setNewValues] = useState({
     position: '',
     league: '',
@@ -125,7 +125,6 @@ export default function FootballCardGame() {
     }
   };
 
-  // Realtime ซิงค์ผู้เล่น
   useEffect(() => {
     if (isLoggedIn) {
       const channel = supabase.channel(`room-fixed-${SINGLE_ROOM_ID}`)
@@ -146,7 +145,7 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // Polling กลางสำหรับซิงค์สถานะห้อง เวลา และตารางเกมทุกๆ 1 วินาที
+  // Polling กลางสำหรับซิงค์สถานะห้อง เวลา และสถานะ Pause ทุกๆ 1 วินาที
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -163,6 +162,8 @@ export default function FootballCardGame() {
         }
         return;
       }
+
+      setIsPaused(!!roomData.is_paused); // ซิงค์สถานะการหยุดเกม
 
       if (roomData.status === 'waiting' && gameState !== 'lobby' && gameState !== 'customize') {
         setGameState('lobby');
@@ -188,7 +189,7 @@ export default function FootballCardGame() {
         if (roomData.time_left !== undefined) setTimeLeft(roomData.time_left);
       }
 
-      if (gameState === 'playing' && initialPlayerCount > 0) {
+      if (gameState === 'playing' && initialPlayerCount > 0 && !roomData.is_paused) {
         const { data: currentActivePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
         if (currentActivePlayers && currentActivePlayers.length < initialPlayerCount) {
           if (userRole === 'admin') {
@@ -228,7 +229,8 @@ export default function FootballCardGame() {
       id: SINGLE_ROOM_ID,
       name: 'Main Lobby',
       host: username,
-      status: 'waiting'
+      status: 'waiting',
+      is_paused: false
     }]);
 
     if (error) {
@@ -240,10 +242,19 @@ export default function FootballCardGame() {
     setGameState('lobby');
   };
 
-  // ตัวจัดการเวลาฝั่ง Host เป็นคนรัน Timer กลางแล้วอัปเดตลงตาราง rooms
+  // ฟังก์ชันสำหรับ Admin กด Pause / Resume เกม
+  const togglePauseGame = async () => {
+    if (userRole !== 'admin') return;
+    const newPauseState = !isPaused;
+    setIsPaused(newPauseState);
+
+    await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
+  };
+
+  // ตัวจัดการเวลาฝั่ง Host (จะทำงานก็ต่อเมื่อเกมไม่ถูก Pause เท่านั้น)
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
-    if (gameState !== 'playing' && gameState !== 'countdown') return;
+    if ((gameState !== 'playing' && gameState !== 'countdown') || isPaused) return;
 
     const timer = setInterval(async () => {
       if (gameState === 'countdown') {
@@ -255,22 +266,14 @@ export default function FootballCardGame() {
           await supabase.from('rooms').update({ status: 'playing', time_left: 20, turn_phase: 'placing' }).eq('id', SINGLE_ROOM_ID);
         }
       } else if (gameState === 'playing') {
-        if (turnPhase === 'answering') return; // ช่วงตอบไม่ต้องลดเวลา
+        if (turnPhase === 'answering') return;
 
         if (timeLeft > 1) {
           const newTime = timeLeft - 1;
           setTimeLeft(newTime);
           await supabase.from('rooms').update({ time_left: newTime }).eq('id', SINGLE_ROOM_ID);
         } else {
-          if (turnPhase === 'placing') {
-            // หมดเวลาวางการ์ด ข้ามไปคนถัดไป
-            const nextTurn = (currentTurn + 1) % roomPlayers.length;
-            setCurrentTurn(nextTurn);
-            setTimeLeft(20);
-            setTurnPhase('placing');
-            await supabase.from('rooms').update({ current_turn: nextTurn, time_left: 20, turn_phase: 'placing' }).eq('id', SINGLE_ROOM_ID);
-          } else if (turnPhase === 'stealing') {
-            // หมดเวลา Steal
+          if (turnPhase === 'placing' || turnPhase === 'stealing') {
             const nextTurn = (currentTurn + 1) % roomPlayers.length;
             setCurrentTurn(nextTurn);
             setTimeLeft(20);
@@ -282,7 +285,7 @@ export default function FootballCardGame() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [gameState, countdownTime, timeLeft, turnPhase, currentTurn, roomPlayers, userRole]);
+  }, [gameState, countdownTime, timeLeft, turnPhase, currentTurn, roomPlayers, userRole, isPaused]);
 
   const loadCategoriesFromDB = async () => {
     const { data, error } = await supabase
@@ -489,11 +492,10 @@ export default function FootballCardGame() {
     setNewValues({ ...newValues, [categoryKey]: '' });
   };
 
-  // ตรวจสอบว่าเป็นตาของผู้เล่นปัจจุบันหรือไม่
   const isMyTurn = roomPlayers[currentTurn]?.username?.toLowerCase() === username.toLowerCase();
 
   const handleSelectCard = async (cardIdx) => {
-    if (!isMyTurn || turnPhase !== 'placing') return;
+    if (isPaused || !isMyTurn || turnPhase !== 'placing') return;
     
     const player = roomPlayers[currentTurn];
     const card = player.hand[cardIdx];
@@ -504,7 +506,6 @@ export default function FootballCardGame() {
       [card.type]: card
     };
 
-    // อัปเดตข้อมูลมือและโต๊ะลง Supabase ทันที
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, hand: updatedHand } : p);
     setRoomPlayers(updatedPlayers);
     setTableCards(updatedTable);
@@ -519,7 +520,7 @@ export default function FootballCardGame() {
   };
 
   const handleSkipTurn = async () => {
-    if (!isMyTurn || turnPhase !== 'placing') return;
+    if (isPaused || !isMyTurn || turnPhase !== 'placing') return;
     const nextTurn = (currentTurn + 1) % roomPlayers.length;
     setCurrentTurn(nextTurn);
     setTimeLeft(20);
@@ -533,7 +534,7 @@ export default function FootballCardGame() {
   };
 
   const handleOwnerAnswerCorrect = async () => {
-    if (!isMyTurn) return;
+    if (isPaused || !isMyTurn) return;
     const player = roomPlayers[currentTurn];
     const newScore = (player.score || 0) + 1;
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: newScore } : p);
@@ -553,7 +554,7 @@ export default function FootballCardGame() {
   };
 
   const handleOwnerAnswerWrong = async () => {
-    if (!isMyTurn) return;
+    if (isPaused || !isMyTurn) return;
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: (p.score || 0) - 1 } : p);
     setRoomPlayers(updatedPlayers);
     setTurnPhase('stealing');
@@ -567,7 +568,7 @@ export default function FootballCardGame() {
   };
 
   const handleStealClick = async (playerId) => {
-    if (isMyTurn) return; // เจ้าของเทิร์นกด Steal ตัวเองไม่ได้
+    if (isPaused || isMyTurn) return;
     setStealingPlayerId(playerId);
   };
 
@@ -633,6 +634,7 @@ export default function FootballCardGame() {
     setTableCards(initialTable);
     setCurrentTurn(0);
     setWinner(null);
+    setIsPaused(false);
 
     await supabase.from('rooms').upsert({ 
       id: SINGLE_ROOM_ID,
@@ -644,7 +646,8 @@ export default function FootballCardGame() {
       table_cards: initialTable,
       current_turn: 0,
       turn_phase: 'placing',
-      time_left: 20
+      time_left: 20,
+      is_paused: false
     });
 
     setGameState('countdown');
@@ -812,8 +815,32 @@ export default function FootballCardGame() {
 
         {/* หน้าจอเล่นเกมปกติ */}
         {gameState === 'playing' && (
-          <div className="max-w-4xl w-full flex flex-col gap-6">
+          <div className="max-w-4xl w-full flex flex-col gap-6 relative">
             
+            {/* แถบควบคุมพิเศษสำหรับ Admin (ปุ่ม Pause / Resume) */}
+            {userRole === 'admin' && (
+              <div className="bg-slate-800 p-3 rounded-xl shadow flex justify-between items-center border border-amber-500/50">
+                <span className="text-xs text-amber-400 font-bold">🛡️ Admin Control Panel</span>
+                <button 
+                  onClick={togglePauseGame}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer shadow ${
+                    isPaused ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-amber-600 hover:bg-amber-500 text-white'
+                  }`}
+                >
+                  {isPaused ? '▶️ เล่นต่อ (Resume Game)' : '⏸️ หยุดเกม (Pause Game)'}
+                </button>
+              </div>
+            )}
+
+            {/* หน้าต่างแจ้งเตือนกรณีเกมถูกหยุด (Pause) */}
+            {isPaused && (
+              <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center rounded-xl p-6 text-center">
+                <div className="text-4xl mb-2">⏸️</div>
+                <h2 className="text-2xl font-bold text-amber-400 mb-2">เกมถูกหยุดชั่วคราวโดย Admin</h2>
+                <p className="text-slate-300 text-xs">กรุณารอ Admin กดเล่นต่อเพื่อดำเนินการแข่งขันต่อ...</p>
+              </div>
+            )}
+
             <div className="flex justify-between items-center bg-slate-800 p-4 rounded-xl shadow">
               <div>
                 <span className="text-slate-400 text-sm">Current Turn:</span>
@@ -862,7 +889,6 @@ export default function FootballCardGame() {
                 })}
               </div>
 
-              {/* ส่วนควบคุมเฉพาะเจ้าของเทิร์น */}
               {isMyTurn && turnPhase === 'placing' && (
                 <div className="text-center">
                   <p className="text-emerald-300 font-medium mb-2 animate-pulse">
@@ -933,7 +959,6 @@ export default function FootballCardGame() {
               )}
             </div>
 
-            {/* แสดงการ์ดเฉพาะในมือของผู้เล่นคนนั้นๆ เท่านั้น (คนอื่นมองไม่เห็น) */}
             <div className="bg-slate-800 p-4 rounded-xl shadow">
               <h4 className="font-bold mb-3 text-emerald-300">
                 Hand of <span className="text-yellow-400">{username} (Your Cards)</span>
@@ -942,9 +967,9 @@ export default function FootballCardGame() {
                 {roomPlayers.find(p => p.username?.toLowerCase() === username.toLowerCase())?.hand?.map((card, idx) => (
                   <div 
                     key={idx} 
-                    onClick={() => isMyTurn && turnPhase === 'placing' && handleSelectCard(idx)}
+                    onClick={() => !isPaused && isMyTurn && turnPhase === 'placing' && handleSelectCard(idx)}
                     className={`p-3 rounded-lg min-w-[120px] text-center transition transform flex flex-col items-center ${
-                      isMyTurn && turnPhase === 'placing' ? 'bg-slate-700 hover:bg-slate-600 cursor-pointer hover:-translate-y-1 border border-emerald-500/50' : 'bg-slate-800 opacity-60'
+                      !isPaused && isMyTurn && turnPhase === 'placing' ? 'bg-slate-700 hover:bg-slate-600 cursor-pointer hover:-translate-y-1 border border-emerald-500/50' : 'bg-slate-800 opacity-60'
                     }`}
                   >
                     <div className="text-[10px] text-slate-400 uppercase">{card.type}</div>
@@ -1045,7 +1070,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Synchronized Timer & Hand Security Active.
+        © 2026 L88PER. Admin Pause Control Active.
       </footer>
 
     </div>
