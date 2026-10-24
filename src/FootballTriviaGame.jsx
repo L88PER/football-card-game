@@ -107,7 +107,7 @@ export default function FootballCardGame() {
       setGameState('finished');
       if (roomData.winner_data) setWinner(roomData.winner_data);
     }
-    if (roomData.players_data) {
+    if (roomData.players_data && roomData.status !== 'waiting') {
       setRoomPlayers(roomData.players_data);
       setInitialPlayerCount(roomData.players_data.length);
     }
@@ -142,7 +142,7 @@ export default function FootballCardGame() {
 
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
-    if (playersData && gameState === 'lobby') {
+    if (playersData) {
       setRoomPlayers(playersData);
     }
   };
@@ -167,7 +167,6 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // Polling กลางสำหรับซิงค์สถานะห้องแบบเรียลไทม์
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -187,7 +186,6 @@ export default function FootballCardGame() {
 
       syncGameState(roomData);
 
-      // ตรวจสอบผู้เล่นออกระหว่างเกม
       if (gameState === 'playing' && initialPlayerCount > 0 && !roomData.is_paused) {
         const { data: currentActivePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
         if (currentActivePlayers && currentActivePlayers.length < initialPlayerCount) {
@@ -249,7 +247,6 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
   };
 
-  // ตัวจัดการเวลาฝั่ง Admin (Host) คนเดียวเท่านั้นที่รัน Timer เพื่อป้องกันเวลานับซ้ำซ้อน
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
     if (isPaused) return;
@@ -664,7 +661,6 @@ export default function FootballCardGame() {
     }).eq('id', SINGLE_ROOM_ID);
   };
 
-  // ฟังก์ชันเริ่มเกมใหม่ (ใช้ร่วมกันตอนกด Start จาก Lobby หรือกด Restart ระหว่างเล่น)
   const startGameHost = async () => {
     if (userRole !== 'admin') {
       alert('Only Admin can start the game.');
@@ -848,7 +844,7 @@ export default function FootballCardGame() {
               <div className="space-y-2">
                 {roomPlayers.map((p, idx) => (
                   <div key={idx} className="flex justify-between items-center bg-slate-700 p-2 rounded-lg text-sm">
-                    <span>{userRole === 'admin' && idx === 0 ? '👑' : '👤'} {p.username || p.name}</span>
+                    <span>{userRole === 'admin' && p.username === username ? '👑' : '👤'} {p.username || p.name}</span>
                   </div>
                 ))}
               </div>
@@ -1185,7 +1181,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Stable Timer & Restart Feature Active.
+        © 2026 L88PER. Admin Lobby View Fixed.
       </footer>
 
     </div>
