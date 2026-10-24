@@ -60,7 +60,6 @@ export default function FootballCardGame() {
   const [lastPlayedCard, setLastPlayedCard] = useState(null);
   const [stealingPlayerId, setStealingPlayerId] = useState(null);
   const [winner, setWinner] = useState(null);
-  const [feedback, setFeedback] = useState('');
   
   const [newValues, setNewValues] = useState({
     position: '',
@@ -83,7 +82,7 @@ export default function FootballCardGame() {
         setGameState('adminCreateRoom');
       } else {
         await joinRoomProcess(username);
-        setGameState(roomData.status === 'waiting' ? 'lobby' : roomData.status);
+        syncGameState(roomData);
       }
     } else {
       if (!roomData) {
@@ -92,8 +91,32 @@ export default function FootballCardGame() {
         return;
       }
       await joinRoomProcess(username);
-      setGameState(roomData.status === 'waiting' ? 'lobby' : roomData.status);
+      syncGameState(roomData);
     }
+  };
+
+  const syncGameState = (roomData) => {
+    if (roomData.status === 'waiting') {
+      setGameState('lobby');
+    } else if (roomData.status === 'countdown') {
+      setGameState('countdown');
+      if (roomData.countdown_time !== undefined) setCountdownTime(roomData.countdown_time);
+    } else if (roomData.status === 'playing') {
+      setGameState('playing');
+    } else if (roomData.status === 'finished') {
+      setGameState('finished');
+      if (roomData.winner_data) setWinner(roomData.winner_data);
+    }
+    if (roomData.players_data) {
+      setRoomPlayers(roomData.players_data);
+      setInitialPlayerCount(roomData.players_data.length);
+    }
+    if (roomData.table_cards) setTableCards(roomData.table_cards);
+    if (roomData.current_turn !== undefined) setCurrentTurn(roomData.current_turn);
+    if (roomData.turn_phase) setTurnPhase(roomData.turn_phase);
+    if (roomData.time_left !== undefined) setTimeLeft(roomData.time_left);
+    if (roomData.is_paused !== undefined) setIsPaused(roomData.is_paused);
+    if (roomData.stealing_player_id !== undefined) setStealingPlayerId(roomData.stealing_player_id);
   };
 
   const joinRoomProcess = async (uname) => {
@@ -119,7 +142,7 @@ export default function FootballCardGame() {
 
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
-    if (playersData) {
+    if (playersData && gameState === 'lobby') {
       setRoomPlayers(playersData);
     }
   };
@@ -144,6 +167,7 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
+  // Polling กลางสำหรับซิงค์สถานะห้องแบบเรียลไทม์
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -161,37 +185,9 @@ export default function FootballCardGame() {
         return;
       }
 
-      setIsPaused(!!roomData.is_paused);
+      syncGameState(roomData);
 
-      if (roomData.status === 'waiting' && gameState !== 'lobby' && gameState !== 'customize') {
-        setGameState('lobby');
-      } else if (roomData.status === 'countdown' && gameState === 'lobby') {
-        if (roomData.players_data) {
-          setRoomPlayers(roomData.players_data);
-          setInitialPlayerCount(roomData.players_data.length);
-        }
-        if (roomData.table_cards) setTableCards(roomData.table_cards);
-        setGameState('countdown');
-        setCountdownTime(roomData.countdown_time || 10);
-      } else if (roomData.status === 'playing') {
-        if (gameState === 'lobby' || gameState === 'countdown' || gameState === 'finished') {
-          setGameState('playing');
-          setWinner(null);
-        }
-        if (roomData.players_data) {
-          setRoomPlayers(roomData.players_data);
-          if (initialPlayerCount === 0) setInitialPlayerCount(roomData.players_data.length);
-        }
-        if (roomData.table_cards) setTableCards(roomData.table_cards);
-        if (roomData.current_turn !== undefined) setCurrentTurn(roomData.current_turn);
-        if (roomData.turn_phase) setTurnPhase(roomData.turn_phase);
-        if (roomData.time_left !== undefined) setTimeLeft(roomData.time_left);
-        if (roomData.stealing_player_id !== undefined) setStealingPlayerId(roomData.stealing_player_id);
-      } else if (roomData.status === 'finished') {
-        setGameState('finished');
-        if (roomData.winner_data) setWinner(roomData.winner_data);
-      }
-
+      // ตรวจสอบผู้เล่นออกระหว่างเกม
       if (gameState === 'playing' && initialPlayerCount > 0 && !roomData.is_paused) {
         const { data: currentActivePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
         if (currentActivePlayers && currentActivePlayers.length < initialPlayerCount) {
@@ -253,26 +249,39 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
   };
 
+  // ตัวจัดการเวลาฝั่ง Admin (Host) คนเดียวเท่านั้นที่รัน Timer เพื่อป้องกันเวลานับซ้ำซ้อน
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
-    if ((gameState !== 'playing' && gameState !== 'countdown') || isPaused) return;
+    if (isPaused) return;
 
     const timer = setInterval(async () => {
       if (gameState === 'countdown') {
-        if (countdownTime > 1) {
-          setCountdownTime(prev => prev - 1);
-          await supabase.from('rooms').update({ countdown_time: countdownTime - 1 }).eq('id', SINGLE_ROOM_ID);
+        const { data: rData } = await supabase.from('rooms').select('countdown_time').eq('id', SINGLE_ROOM_ID).single();
+        const curCount = rData?.countdown_time !== undefined ? rData.countdown_time : 10;
+
+        if (curCount > 1) {
+          const nextCount = curCount - 1;
+          setCountdownTime(nextCount);
+          await supabase.from('rooms').update({ countdown_time: nextCount }).eq('id', SINGLE_ROOM_ID);
         } else {
           setGameState('playing');
-          await supabase.from('rooms').update({ status: 'playing', time_left: 20, turn_phase: 'placing' }).eq('id', SINGLE_ROOM_ID);
+          await supabase.from('rooms').update({ 
+            status: 'playing', 
+            time_left: 20, 
+            turn_phase: 'placing', 
+            countdown_time: 10 
+          }).eq('id', SINGLE_ROOM_ID);
         }
       } else if (gameState === 'playing') {
         if (turnPhase === 'answering') return;
 
-        if (timeLeft > 1) {
-          const newTime = timeLeft - 1;
-          setTimeLeft(newTime);
-          await supabase.from('rooms').update({ time_left: newTime }).eq('id', SINGLE_ROOM_ID);
+        const { data: rData } = await supabase.from('rooms').select('time_left').eq('id', SINGLE_ROOM_ID).single();
+        const curTime = rData?.time_left !== undefined ? rData.time_left : 20;
+
+        if (curTime > 1) {
+          const nextTime = curTime - 1;
+          setTimeLeft(nextTime);
+          await supabase.from('rooms').update({ time_left: nextTime }).eq('id', SINGLE_ROOM_ID);
         } else {
           if (turnPhase === 'placing') {
             const nextTurn = (currentTurn + 1) % roomPlayers.length;
@@ -314,7 +323,7 @@ export default function FootballCardGame() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [gameState, countdownTime, timeLeft, turnPhase, currentTurn, roomPlayers, userRole, isPaused, stealingPlayerId]);
+  }, [gameState, turnPhase, currentTurn, roomPlayers, userRole, isPaused, stealingPlayerId]);
 
   const loadCategoriesFromDB = async () => {
     const { data, error } = await supabase
@@ -420,11 +429,12 @@ export default function FootballCardGame() {
         setGameState('adminCreateRoom');
       } else {
         await joinRoomProcess(cleanUsername);
-        setGameState('lobby');
+        syncGameState(roomData);
       }
     } else {
       await joinRoomProcess(cleanUsername);
-      setGameState('lobby');
+      const { data: roomData } = await supabase.from('rooms').select('*').eq('id', SINGLE_ROOM_ID).single();
+      if (roomData) syncGameState(roomData);
     }
   };
 
@@ -568,7 +578,6 @@ export default function FootballCardGame() {
     const newScore = (player.score || 0) + 1;
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: newScore } : p);
     
-    // เช็คเงื่อนไขชนะ (คะแนน >= 3 และการ์ดในมือหมด)
     if (newScore >= 3 && player.hand?.length === 0) {
       setWinner(player);
       setGameState('finished');
@@ -655,6 +664,7 @@ export default function FootballCardGame() {
     }).eq('id', SINGLE_ROOM_ID);
   };
 
+  // ฟังก์ชันเริ่มเกมใหม่ (ใช้ร่วมกันตอนกด Start จาก Lobby หรือกด Restart ระหว่างเล่น)
   const startGameHost = async () => {
     if (userRole !== 'admin') {
       alert('Only Admin can start the game.');
@@ -695,6 +705,8 @@ export default function FootballCardGame() {
     setWinner(null);
     setIsPaused(false);
     setStealingPlayerId(null);
+    setCountdownTime(10);
+    setGameState('countdown');
 
     await supabase.from('rooms').upsert({ 
       id: SINGLE_ROOM_ID,
@@ -711,9 +723,6 @@ export default function FootballCardGame() {
       stealing_player_id: null,
       winner_data: null
     });
-
-    setGameState('countdown');
-    setCountdownTime(10);
   };
 
   if (!isLoggedIn) {
@@ -901,14 +910,23 @@ export default function FootballCardGame() {
             {userRole === 'admin' && (
               <div className="bg-slate-800 p-3 rounded-xl shadow flex justify-between items-center border border-amber-500/50">
                 <span className="text-xs text-amber-400 font-bold">🛡️ Admin Control Panel</span>
-                <button 
-                  onClick={togglePauseGame}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer shadow ${
-                    isPaused ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-amber-600 hover:bg-amber-500 text-white'
-                  }`}
-                >
-                  {isPaused ? '▶️ เล่นต่อ (Resume Game)' : '⏸️ หยุดเกม (Pause Game)'}
-                </button>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={startGameHost}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition cursor-pointer shadow"
+                    title="เริ่มเกมใหม่ทันที"
+                  >
+                    🔄 Restart Game
+                  </button>
+                  <button 
+                    onClick={togglePauseGame}
+                    className={`px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer shadow ${
+                      isPaused ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-amber-600 hover:bg-amber-500 text-white'
+                    }`}
+                  >
+                    {isPaused ? '▶️ เล่นต่อ' : '⏸️ หยุดเกม'}
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1139,7 +1157,7 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* หน้าจอจบเกม (แสดง Winner พร้อมปุ่มเริ่มเกมใหม่สำหรับ Admin และปุ่มออกสำหรับผู้เล่น) */}
+        {/* หน้าจอจบเกม */}
         {gameState === 'finished' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
             <h2 className="text-3xl font-bold mb-2 text-emerald-400">🎉 Winner!</h2>
@@ -1167,7 +1185,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Admin Restart & Leave Room Active.
+        © 2026 L88PER. Stable Timer & Restart Feature Active.
       </footer>
 
     </div>
