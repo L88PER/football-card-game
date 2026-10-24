@@ -76,7 +76,6 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // ตรวจสอบสถานะห้องและสถานะผู้ใช้เมื่อรีเฟรชหน้าจอ
   const checkRoomAndSessionState = async () => {
     const { data: roomData } = await supabase.from('rooms').select('*').eq('id', SINGLE_ROOM_ID).single();
 
@@ -84,12 +83,10 @@ export default function FootballCardGame() {
       if (!roomData) {
         setGameState('adminCreateRoom');
       } else {
-        // ถือว่า Admin เข้ามาดูแลห้องต่อ
         await joinRoomProcess(username);
         setGameState(roomData.status === 'waiting' ? 'lobby' : roomData.status);
       }
     } else {
-      // สำหรับ Player ทั่วไป ต้องเช็คว่า Admin สร้างห้องหรือยัง
       if (!roomData) {
         alert('Admin ยังไม่ได้สร้างห้อง กรุณารอ Admin สร้างห้องก่อน');
         handleLogoutClean();
@@ -120,7 +117,6 @@ export default function FootballCardGame() {
     }
   };
 
-  // 1. Realtime Subscribe สำหรับซิงค์ผู้เล่น
   useEffect(() => {
     if (isLoggedIn) {
       const channel = supabase.channel(`room-fixed-${SINGLE_ROOM_ID}`)
@@ -141,7 +137,6 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // 2. Polling เช็คสถานะห้อง
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -178,7 +173,6 @@ export default function FootballCardGame() {
         setGameState('playing');
       }
 
-      // เช็คว่าคนไม่ครบระหว่างเกมไหม
       if (gameState === 'playing' && initialPlayerCount > 0) {
         const { data: currentActivePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
         if (currentActivePlayers && currentActivePlayers.length < initialPlayerCount) {
@@ -211,13 +205,11 @@ export default function FootballCardGame() {
     setRoomPlayers([]);
   };
 
-  // Admin สร้างห้องใหม่
+  // Admin สร้างห้องใหม่ และ Join เข้าห้องทันที
   const handleAdminCreateRoom = async () => {
-    // ลบห้องเก่าและผู้เล่นเก่าทิ้งเคลียร์พื้นที่
     await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
     await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID);
 
-    // สร้างห้องใหม่
     const { error } = await supabase.from('rooms').insert([{
       id: SINGLE_ROOM_ID,
       name: 'Main Lobby',
@@ -234,7 +226,6 @@ export default function FootballCardGame() {
     setGameState('lobby');
   };
 
-  // นับถอยหลัง 10 วิ ก่อนเข้าเกม
   useEffect(() => {
     if (gameState !== 'countdown') return;
 
@@ -249,7 +240,6 @@ export default function FootballCardGame() {
     return () => clearInterval(timer);
   }, [gameState]);
 
-  // ควบคุม Timer ในหน้าเล่นเกม
   useEffect(() => {
     if (gameState !== 'playing') return;
     if (turnPhase === 'answering') return;
@@ -392,7 +382,6 @@ export default function FootballCardGame() {
 
     const assignedRole = userData.role || 'player';
 
-    // ถ้าเป็น Player ต้องเช็คว่า Admin สร้างห้องหรือยัง
     if (assignedRole === 'player') {
       const { data: roomData } = await supabase.from('rooms').select('*').eq('id', SINGLE_ROOM_ID).single();
       if (!roomData) {
@@ -613,7 +602,6 @@ export default function FootballCardGame() {
     }
   };
 
-  // เฉพาะ Admin เท่านั้นที่มีสิทธิ์กด Start Game
   const startGameHost = async () => {
     if (userRole !== 'admin') {
       alert('Only Admin can start the game.');
@@ -751,7 +739,7 @@ export default function FootballCardGame() {
                 onClick={handleAdminCreateRoom}
                 className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow cursor-pointer text-sm"
               >
-                🏠 สร้างห้องเกมใหม่ (Create Room)
+                🏠 สร้างห้องเกมใหม่และเข้ารอ (Create Room)
               </button>
               <button 
                 onClick={handleLogoutClean}
@@ -1059,7 +1047,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Admin-Created Rooms & Cookie Session Active.
+        © 2026 L88PER. Admin-Created Rooms & Auto-Join Active.
       </footer>
 
     </div>
