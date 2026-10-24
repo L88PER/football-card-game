@@ -15,16 +15,21 @@ export default function FootballCardGame() {
   const SINGLE_ROOM_ID = 1; // ห้องกลางถาวร
 
   // Categories and cards data
+  const [categoriesList, setCategoriesList] = useState([]); // รายการหมวดหมู่ทั้งหมดจาก DB
   const [categories, setCategories] = useState({
     position: [],
     league: [],
     nationality: []
   });
 
-  // State สำหรับให้ Admin เพิ่มข้อมูลการ์ดใหม่
-  const [selectedCategoryKey, setSelectedCategoryKey] = useState('position');
+  // State สำหรับให้ Admin เพิ่มหมวดหมู่ใหม่ และ เพิ่มไอเทมการ์ดพร้อมอัปโหลดรูป
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryKey, setNewCategoryKey] = useState('');
+  
+  const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const [newItemValue, setNewItemValue] = useState('');
-  const [newItemImage, setNewItemImage] = useState('');
+  const [imageFile, setImageFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     loadCategoriesFromDB();
@@ -61,12 +66,23 @@ export default function FootballCardGame() {
   }, [isLoggedIn, view]);
 
   const loadCategoriesFromDB = async () => {
+    // โหลดตาราง categories หลัก
+    const { data: catData } = await supabase.from('categories').select('*');
+    if (catData) {
+      setCategoriesList(catData);
+      if (catData.length > 0 && !selectedCategoryId) {
+        setSelectedCategoryId(catData[0].id);
+      }
+    }
+
+    // โหลดไอเทมการ์ดทั้งหมด
     const { data } = await supabase.from('category_items').select(`id, item_value, image_url, categories (key_name)`);
     if (data && data.length > 0) {
-      const formatted = { position: [], league: [], nationality: [] };
+      const formatted = {};
       data.forEach(item => {
         const key = item.categories?.key_name;
-        if (formatted[key]) {
+        if (key) {
+          if (!formatted[key]) formatted[key] = [];
           formatted[key].push({ id: item.id, value: item.item_value, image: item.image_url || '' });
         }
       });
@@ -113,7 +129,7 @@ export default function FootballCardGame() {
     setIsAdminRegister(false);
   };
 
-  // ฟังก์ชัน Login (เข้าสู่หน้าหลัก)
+  // ฟังก์ชัน Login
   const handleLogin = async (e) => {
     e.preventDefault();
     const cleanUsername = username.trim();
@@ -168,14 +184,12 @@ export default function FootballCardGame() {
     }
   };
 
-  // ออกจากห้องแต่ยังอยู่ในระบบ (กลับหน้า Main Menu)
   const handleLeaveRoomOnly = async () => {
     await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
     setRoomPlayers([]);
     setView('mainMenu');
   };
 
-  // Logout เต็มรูปแบบ (กลับหน้า Login)
   const handleLogoutClean = async () => {
     await handleLeaveRoomOnly();
     setIsLoggedIn(false);
@@ -184,33 +198,81 @@ export default function FootballCardGame() {
     setUserRole('player');
   };
 
-  // Admin เพิ่มไอเทมการ์ดใหม่
-  const handleAddCardItem = async (e) => {
+  // 1. Admin เพิ่มหมวดหมู่ใหม่
+  const handleAddCategory = async (e) => {
     e.preventDefault();
-    if (!newItemValue.trim()) return;
+    if (!newCategoryName.trim() || !newCategoryKey.trim()) return;
 
-    // หา category_id จาก key_name ('position', 'league', 'nationality')
-    const { data: catData } = await supabase.from('categories').select('id').eq('key_name', selectedCategoryKey).single();
-    if (!catData) {
-      alert('Category not found.');
-      return;
-    }
-
-    const { error } = await supabase.from('category_items').insert([{
-      category_id: catData.id,
-      item_value: newItemValue.trim(),
-      image_url: newItemImage.trim()
+    const { error } = await supabase.from('categories').insert([{
+      name: newCategoryName.trim(),
+      key_name: newCategoryKey.trim().toLowerCase()
     }]);
 
     if (error) {
-      alert('Failed to add item.');
+      alert('Failed to add category (Key might already exist).');
       return;
     }
 
-    alert('Card item added successfully!');
-    setNewItemValue('');
-    setNewItemImage('');
+    alert('Category added successfully!');
+    setNewCategoryName('');
+    setNewCategoryKey('');
     loadCategoriesFromDB();
+  };
+
+  // 2. Admin เพิ่มไอเทมการ์ดพร้อมอัปโหลดรูปภาพ
+  const handleAddCardItem = async (e) => {
+    e.preventDefault();
+    if (!newItemValue.trim() || !selectedCategoryId) return;
+
+    setUploading(true);
+    let imageUrl = '';
+
+    try {
+      if (imageFile) {
+        const fileExt = imageFile.name.split('.').pop();
+        const fileName = `${Date.now()}.${fileExt}`;
+        const filePath = `${fileName}`;
+
+        // อัปโหลดไฟล์ไปที่ Supabase Storage (Bucket ชื่อ 'card-images')
+        const { error: uploadError } = await supabase.storage
+          .from('card-images')
+          .upload(filePath, imageFile);
+
+        if (uploadError) {
+          alert('Error uploading image: ' + uploadError.message);
+          setUploading(false);
+          return;
+        }
+
+        // ดึง Public URL ของรูปภาพ
+        const { data: publicURLData } = supabase.storage
+          .from('card-images')
+          .getPublicUrl(filePath);
+
+        imageUrl = publicURLData.publicUrl;
+      }
+
+      // บันทึกลงตาราง category_items
+      const { error: insertError } = await supabase.from('category_items').insert([{
+        category_id: selectedCategoryId,
+        item_value: newItemValue.trim(),
+        image_url: imageUrl
+      }]);
+
+      if (insertError) {
+        alert('Failed to save card item.');
+      } else {
+        alert('Card item added successfully!');
+        setNewItemValue('');
+        setImageFile(null);
+        loadCategoriesFromDB();
+      }
+    } catch (err) {
+      console.error(err);
+      alert('An error occurred during upload.');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const isHost = roomPlayers.length > 0 && roomPlayers[0].username === username;
@@ -236,13 +298,18 @@ export default function FootballCardGame() {
       return { ...p, hand, score: 0 };
     });
 
-    const posList = categories.position;
-    const leaList = categories.league;
-    const natList = categories.nationality;
+    const firstKey = keys[0] || 'position';
+    const secondKey = keys[1] || 'league';
+    const thirdKey = keys[2] || 'nationality';
+
+    const posList = categories[firstKey] || [];
+    const leaList = categories[secondKey] || [];
+    const natList = categories[thirdKey] || [];
+
     const initialTable = {
-      position: posList[Math.floor(Math.random() * posList.length)],
-      league: leaList[Math.floor(Math.random() * leaList.length)],
-      nationality: natList[Math.floor(Math.random() * natList.length)]
+      position: posList.length > 0 ? posList[Math.floor(Math.random() * posList.length)] : null,
+      league: leaList.length > 0 ? leaList[Math.floor(Math.random() * leaList.length)] : null,
+      nationality: natList.length > 0 ? natList[Math.floor(Math.random() * natList.length)] : null
     };
 
     await supabase.from('rooms').upsert({ 
@@ -341,13 +408,12 @@ export default function FootballCardGame() {
                 🎮 Join Game Room
               </button>
 
-              {/* เมนูจัดการข้อมูลเฉพาะ Admin */}
               {userRole === 'admin' && (
                 <button 
                   onClick={() => setView('customize')}
                   className="w-full py-3 bg-blue-600 hover:bg-blue-500 font-bold rounded-xl transition shadow cursor-pointer text-sm"
                 >
-                  ⚙️ Customize Card Data (Admin)
+                  ⚙️ Customize Categories & Cards (Admin)
                 </button>
               )}
 
@@ -399,65 +465,89 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* 4. หน้า Customize ข้อมูลการ์ดสำหรับ Admin */}
+        {/* 4. หน้า Customize สำหรับ Admin (เพิ่มหมวดหมู่เอง + อัปโหลดรูปภาพการ์ด) */}
         {view === 'customize' && userRole === 'admin' && (
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-lg w-full">
-            <h2 className="text-xl font-bold mb-2 text-emerald-400 text-center">⚙️ Admin Card Management</h2>
-            <p className="text-xs text-slate-400 mb-6 text-center">Add new items and images to category pools</p>
+          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold mb-2 text-emerald-400 text-center">⚙️ Admin Management</h2>
+            <p className="text-xs text-slate-400 mb-6 text-center">Create new categories & upload card items</p>
 
-            <form onSubmit={handleAddCardItem} className="space-y-4">
+            {/* ส่วนที่ 1: เพิ่มหมวดหมู่ใหม่ */}
+            <form onSubmit={handleAddCategory} className="bg-slate-700/50 p-4 rounded-xl mb-6 border border-slate-600 space-y-3">
+              <h3 className="text-xs font-bold text-emerald-300 uppercase">1. Add New Category</h3>
+              <input 
+                type="text" 
+                placeholder="Category Name (e.g. Club)" 
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                className="w-full p-2.5 rounded-lg bg-slate-700 border border-slate-600 text-white text-xs focus:outline-none"
+                required
+              />
+              <input 
+                type="text" 
+                placeholder="Key Name (e.g. club - lowercase english)" 
+                value={newCategoryKey}
+                onChange={(e) => setNewCategoryKey(e.target.value)}
+                className="w-full p-2.5 rounded-lg bg-slate-700 border border-slate-600 text-white text-xs focus:outline-none"
+                required
+              />
+              <button type="submit" className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold rounded-lg transition">
+                Add Category ➕
+              </button>
+            </form>
+
+            {/* ส่วนที่ 2: เพิ่มการ์ดและอัปโหลดรูปภาพ */}
+            <form onSubmit={handleAddCardItem} className="bg-slate-700/50 p-4 rounded-xl mb-6 border border-slate-600 space-y-3">
+              <h3 className="text-xs font-bold text-emerald-300 uppercase">2. Add Card Item & Upload Image</h3>
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">Select Category:</label>
+                <label className="block text-[10px] font-bold text-slate-300 mb-1">Select Category:</label>
                 <select 
-                  value={selectedCategoryKey} 
-                  onChange={(e) => setSelectedCategoryKey(e.target.value)}
-                  className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-white text-sm focus:outline-none focus:border-emerald-400"
+                  value={selectedCategoryId} 
+                  onChange={(e) => setSelectedCategoryId(e.target.value)}
+                  className="w-full p-2.5 rounded-lg bg-slate-700 border border-slate-600 text-white text-xs focus:outline-none"
                 >
-                  <option value="position">Position (ตำแหน่ง)</option>
-                  <option value="league">League (ลีก)</option>
-                  <option value="nationality">Nationality (สัญชาติ)</option>
+                  {categoriesList.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.name} ({cat.key_name})</option>
+                  ))}
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">Item Value / Name:</label>
+                <label className="block text-[10px] font-bold text-slate-300 mb-1">Item Value / Name:</label>
                 <input 
                   type="text" 
-                  placeholder="e.g. Forward, Premier League, Brazil" 
+                  placeholder="e.g. Real Madrid, Striker" 
                   value={newItemValue}
                   onChange={(e) => setNewItemValue(e.target.value)}
-                  className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-white text-sm focus:outline-none focus:border-emerald-400"
+                  className="w-full p-2.5 rounded-lg bg-slate-700 border border-slate-600 text-white text-xs focus:outline-none"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">Image URL (Optional):</label>
+                <label className="block text-[10px] font-bold text-slate-300 mb-1">Upload Image File:</label>
                 <input 
-                  type="text" 
-                  placeholder="https://example.com/image.png" 
-                  value={newItemImage}
-                  onChange={(e) => setNewItemImage(e.target.value)}
-                  className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-white text-sm focus:outline-none focus:border-emerald-400"
+                  type="file" 
+                  accept="image/*"
+                  onChange={(e) => setImageFile(e.target.files[0])}
+                  className="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-slate-600 file:text-white hover:file:bg-slate-50 cursor-pointer"
                 />
               </div>
 
-              <div className="flex gap-3 pt-2">
-                <button 
-                  type="button" 
-                  onClick={() => setView('mainMenu')} 
-                  className="w-1/2 py-3 bg-slate-700 hover:bg-slate-600 font-bold rounded-xl text-sm transition cursor-pointer"
-                >
-                  Back to Menu
-                </button>
-                <button 
-                  type="submit" 
-                  className="w-1/2 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl text-sm transition cursor-pointer shadow"
-                >
-                  Add Item ➕
-                </button>
-              </div>
+              <button 
+                type="submit" 
+                disabled={uploading}
+                className="w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-xs font-bold rounded-lg transition disabled:opacity-50"
+              >
+                {uploading ? 'Uploading...' : 'Add Card Item 🚀'}
+              </button>
             </form>
+
+            <button 
+              onClick={() => setView('mainMenu')} 
+              className="w-full py-3 bg-slate-700 hover:bg-slate-600 font-bold rounded-xl text-sm transition cursor-pointer"
+            >
+              Back to Menu
+            </button>
           </div>
         )}
 
@@ -475,7 +565,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Role-Based Auth & Session Active.
+        © 2026 L88PER. Admin Upload & Custom Categories Active.
       </footer>
     </div>
   );
