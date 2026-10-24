@@ -33,6 +33,7 @@ export default function FootballCardGame() {
   const [password, setPassword] = useState('');
   const [isAdminRegister, setIsAdminRegister] = useState(false);
   const [authMode, setAuthMode] = useState('login');
+  const [hasAdminExists, setHasAdminExists] = useState(false);
 
   const [roomPlayers, setRoomPlayers] = useState([]);
   const SINGLE_ROOM_ID = 1;
@@ -44,7 +45,7 @@ export default function FootballCardGame() {
   });
 
   const [gameState, setGameState] = useState('mainMenu'); 
-  const [countdownTime, setCountdownTime] = useState(0); // นับจาก 0 ถึง 5
+  const [countdownTime, setCountdownTime] = useState(0); 
   const [initialPlayerCount, setInitialPlayerCount] = useState(0);
 
   const [currentTurn, setCurrentTurn] = useState(0); 
@@ -67,7 +68,21 @@ export default function FootballCardGame() {
 
   useEffect(() => {
     loadCategoriesFromDB();
-  }, [isLoggedIn]);
+    checkAdminExists();
+  }, [authMode]);
+
+  const checkAdminExists = async () => {
+    const { data, error } = await supabase
+      .from('users')
+      .select('username')
+      .eq('role', 'admin');
+
+    if (!error && data && data.length > 0) {
+      setHasAdminExists(true);
+    } else {
+      setHasAdminExists(false);
+    }
+  };
 
   const syncGameState = (roomData) => {
     if (!roomData) {
@@ -290,7 +305,6 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
   };
 
-  // ตัวจัดการเวลา Countdown (จาก 0 ถึง 5 วิ) เฉพาะ Admin
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
     if (isPaused) return;
@@ -384,7 +398,16 @@ export default function FootballCardGame() {
       return;
     }
 
-    const roleToAssign = isAdminRegister ? 'admin' : 'player';
+    // ตรวจสอบซ้ำอีกรอบเพื่อความปลอดภัยป้องกันการแย่งสมัคร Admin
+    let roleToAssign = 'player';
+    if (isAdminRegister) {
+      const { data: checkAdmin } = await supabase.from('users').select('username').eq('role', 'admin');
+      if (checkAdmin && checkAdmin.length > 0) {
+        alert('ในระบบมี Admin อยู่แล้ว ไม่สามารถสมัครเป็น Admin ได้');
+        return;
+      }
+      roleToAssign = 'admin';
+    }
 
     const { error } = await supabase.from('users').insert([{ 
       username: cleanUsername, 
@@ -401,6 +424,7 @@ export default function FootballCardGame() {
     setAuthMode('login');
     setPassword('');
     setIsAdminRegister(false);
+    checkAdminExists();
   };
 
   const handleLogin = async (e) => {
@@ -631,7 +655,7 @@ export default function FootballCardGame() {
     setCurrentTurn(0);
     setWinner(null);
     setIsPaused(false);
-    setCountdownTime(0); // เริ่มที่ 0
+    setCountdownTime(0); 
     setGameState('countdown');
 
     await supabase.from('rooms').upsert({ 
@@ -668,7 +692,7 @@ export default function FootballCardGame() {
               เข้าสู่ระบบ
             </button>
             <button 
-              onClick={() => { setAuthMode('register'); setPassword(''); }}
+              onClick={() => { setAuthMode('register'); setPassword(''); checkAdminExists(); }}
               className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition ${authMode === 'register' ? 'bg-emerald-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
             >
               สมัครสมาชิก
@@ -695,7 +719,7 @@ export default function FootballCardGame() {
               required
             />
 
-            {authMode === 'register' && (
+            {authMode === 'register' && !hasAdminExists && (
               <div className="flex items-center justify-center gap-2 py-1 text-xs text-slate-300">
                 <input 
                   type="checkbox" 
