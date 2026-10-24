@@ -6,10 +6,11 @@ export default function FootballCardGame() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [authMode, setAuthMode] = useState('login'); // 'login' หรือ 'register'
   
-  const [view, setView] = useState('lobby'); // lobby, game, customize
+  const [view, setView] = useState('lobby'); // lobby, game
   const [roomPlayers, setRoomPlayers] = useState([]);
-  const SINGLE_ROOM_ID = 1; // ล็อกไอดีห้องกลางถาวร
+  const SINGLE_ROOM_ID = 1; // ห้องกลางถาวร
 
   // Categories and cards data
   const [categories, setCategories] = useState({
@@ -18,20 +19,18 @@ export default function FootballCardGame() {
     nationality: []
   });
 
-  // Load categories and clear any stale session on initial load / refresh
   useEffect(() => {
     loadCategoriesFromDB();
   }, []);
 
-  // เมื่อ Login สำเร็จ ให้เชื่อมต่อ Realtime ฟังการเปลี่ยนแปลงในห้องทันที
+  // Realtime Subscribe for the fixed room
   useEffect(() => {
     if (isLoggedIn) {
       const channel = supabase.channel(`room-fixed-${SINGLE_ROOM_ID}`)
         .on(
           'postgres_changes', 
           { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${SINGLE_ROOM_ID}` }, 
-          (payload) => {
-            console.log('Player change detected:', payload);
+          () => {
             fetchRoomPlayers(SINGLE_ROOM_ID);
           }
         )
@@ -46,7 +45,6 @@ export default function FootballCardGame() {
         )
         .subscribe();
 
-      // โหลดข้อมูลผู้เล่นรอบแรกทันทีตอนเข้าห้อง
       fetchRoomPlayers(SINGLE_ROOM_ID);
 
       return () => {
@@ -69,8 +67,8 @@ export default function FootballCardGame() {
     }
   };
 
-  // Login handler with 4-digit password check & duplicate username check
-  const handleLogin = async (e) => {
+  // ฟังก์ชันสมัครสมาชิก (Register)
+  const handleRegister = async (e) => {
     e.preventDefault();
     const cleanUsername = username.trim();
     if (!cleanUsername) return;
@@ -78,37 +76,57 @@ export default function FootballCardGame() {
       alert('Username must not exceed 8 characters.');
       return;
     }
-    if (password !== '1234') {
-      alert('Incorrect 4-digit password. (Default is 1234)');
+    if (password.length !== 4) {
+      alert('Password must be exactly 4 digits.');
       return;
     }
 
-    // 1. Check if username already exists globally in the users table
+    // ตรวจสอบว่ามี Username นี้ในระบบหรือยัง
     const { data: existingUser } = await supabase.from('users').select('*').eq('username', cleanUsername).single();
-
-    if (!existingUser) {
-      const { error: regError } = await supabase.from('users').insert([{ username: cleanUsername, password }]);
-      if (regError) {
-        alert('Failed to register user.');
-        return;
-      }
+    if (existingUser) {
+      alert('This username is already taken. Please choose another one.');
+      return;
     }
 
-    // 2. Check if the room is already full (max 4 players)
+    // บันทึกผู้ใช้ใหม่ลงตาราง users
+    const { error } = await supabase.from('users').insert([{ username: cleanUsername, password }]);
+    if (error) {
+      alert('Registration failed.');
+      return;
+    }
+
+    alert('Registration successful! Please login.');
+    setAuthMode('login');
+    setPassword('');
+  };
+
+  // ฟังก์ชันเข้าสู่ระบบ (Login) และเข้าห้องทันที
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    const cleanUsername = username.trim();
+    if (!cleanUsername) return;
+
+    // 1. ตรวจสอบว่ามี User นี้และรหัสผ่านถูกต้องไหม
+    const { data: userData } = await supabase.from('users').select('*').eq('username', cleanUsername).single();
+    if (!userData || userData.password !== password) {
+      alert('Invalid username or 4-digit password.');
+      return;
+    }
+
+    // 2. เช็คว่าห้องเต็มหรือยัง (สูงสุด 4 คน)
     const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
-    
     if (activePlayers && activePlayers.length >= 4) {
       alert('The room is full (maximum 4 players).');
       return;
     }
 
-    // 3. Check if this username is already active inside the room
+    // 3. เช็คว่ามีคนใช้ชื่อนี้ซ้ำอยู่ในห้องตอนนี้ไหม
     if (activePlayers && activePlayers.some(p => p.username.toLowerCase() === cleanUsername.toLowerCase())) {
       alert('This username is already active in the room.');
       return;
     }
 
-    // 4. Insert user into the active room players table
+    // 4. บันทึกเข้าห้อง active
     const { error: joinError } = await supabase.from('room_players').insert([{ 
       room_id: SINGLE_ROOM_ID, 
       username: cleanUsername, 
@@ -129,14 +147,13 @@ export default function FootballCardGame() {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) {
       setRoomPlayers(playersData);
-      // หากผู้เล่นคนนี้ถูกเตะออกหรือไม่มีชื่อในห้องแล้ว ให้เด้งออก
-      if (username && !playersData.some(p => p.username === username)) {
+      if (isLoggedIn && !playersData.some(p => p.username === username)) {
         handleLogoutClean();
       }
     }
   };
 
-  // Leave room or cleanup session
+  // ออกจากห้อง / ล้าง Session
   const handleLogoutClean = async () => {
     if (username) {
       await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
@@ -147,10 +164,9 @@ export default function FootballCardGame() {
     setRoomPlayers([]);
   };
 
-  // First player in the room is the host who can start the game
   const isHost = roomPlayers.length > 0 && roomPlayers[0].username === username;
 
-  // Start game handler (Host only, min 2 players, max 4 players)
+  // Host เริ่มเกม
   const startGame = async () => {
     if (roomPlayers.length < 2) {
       alert('Need at least 2 players to start the game.');
@@ -191,35 +207,56 @@ export default function FootballCardGame() {
     });
   };
 
-  // Login Screen
+  // หน้าจอ Login / Register
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-6 font-sans">
-        <form onSubmit={handleLogin} className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-sm w-full text-center">
-          <h1 className="text-2xl font-bold mb-4 text-emerald-400">⚽ Football Trivia Game</h1>
-          <p className="text-xs text-slate-400 mb-6">Enter Username & 4-Digit Password (Default: 1234)</p>
-          <input 
-            type="text" 
-            maxLength={8}
-            placeholder="Username (Max 8 chars)" 
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-center text-white mb-3 focus:outline-none focus:border-emerald-400 font-bold"
-            required
-          />
-          <input 
-            type="password" 
-            maxLength={4}
-            placeholder="4-Digit Password (1234)" 
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-center text-white mb-6 focus:outline-none focus:border-emerald-400 font-bold tracking-widest"
-            required
-          />
-          <button type="submit" className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer">
-            Login & Join Room
-          </button>
-        </form>
+        <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-sm w-full text-center">
+          <h1 className="text-2xl font-bold mb-2 text-emerald-400">⚽ Football Trivia Game</h1>
+          <p className="text-xs text-slate-400 mb-6">
+            {authMode === 'login' ? 'Login to join the room' : 'Create a new account'}
+          </p>
+
+          {/* ปุ่มสลับโหมด Login / Register */}
+          <div className="flex bg-slate-700 p-1 rounded-xl mb-6">
+            <button 
+              onClick={() => { setAuthMode('login'); setPassword(''); }}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition ${authMode === 'login' ? 'bg-emerald-500 text-white' : 'text-slate-400 hover:text-white'}`}
+            >
+              Login
+            </button>
+            <button 
+              onClick={() => { setAuthMode('register'); setPassword(''); }}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition ${authMode === 'register' ? 'bg-emerald-500 text-white' : 'text-slate-400 hover:text-white'}`}
+            >
+              Register
+            </button>
+          </div>
+
+          <form onSubmit={authMode === 'login' ? handleLogin : handleRegister}>
+            <input 
+              type="text" 
+              maxLength={8}
+              placeholder="Username (Max 8 chars)" 
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-center text-white mb-3 focus:outline-none focus:border-emerald-400 font-bold text-sm"
+              required
+            />
+            <input 
+              type="password" 
+              maxLength={4}
+              placeholder="4-Digit Password" 
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-center text-white mb-6 focus:outline-none focus:border-emerald-400 font-bold tracking-widest text-sm"
+              required
+            />
+            <button type="submit" className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer text-sm shadow">
+              {authMode === 'login' ? 'Login & Join Room' : 'Sign Up'}
+            </button>
+          </form>
+        </div>
       </div>
     );
   }
@@ -280,7 +317,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Secure User Table & Session Active.
+        © 2026 L88PER. Auth & Secure Session Active.
       </footer>
     </div>
   );
