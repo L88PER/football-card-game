@@ -96,7 +96,6 @@ export default function FootballCardGame() {
   };
 
   const syncGameState = (roomData) => {
-    // ถ้าฝั่งผู้เล่นกำลังนับถอยหลังหรือเล่นอยู่แล้ว ไม่ให้สถานะ Lobby ไปทับ
     if (roomData.status === 'waiting' && gameState !== 'countdown' && gameState !== 'playing') {
       setGameState('lobby');
     } else if (roomData.status === 'countdown') {
@@ -109,10 +108,12 @@ export default function FootballCardGame() {
       if (roomData.winner_data) setWinner(roomData.winner_data);
     }
 
-    if (roomData.players_data) {
+    // ถ้าอยู่ในหน้าเล่น ให้ใช้ players_data จาก room แต่ถ้าอยู่หน้า lobby ให้ดึงจาก room_players ผ่าน fetchRoomPlayers
+    if (roomData.status !== 'waiting' && roomData.players_data) {
       setRoomPlayers(roomData.players_data);
       setInitialPlayerCount(roomData.players_data.length);
     }
+
     if (roomData.table_cards) setTableCards(roomData.table_cards);
     if (roomData.current_turn !== undefined) setCurrentTurn(roomData.current_turn);
     if (roomData.turn_phase) setTurnPhase(roomData.turn_phase);
@@ -144,7 +145,7 @@ export default function FootballCardGame() {
 
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
-    if (playersData && gameState === 'lobby') {
+    if (playersData) {
       setRoomPlayers(playersData);
     }
   };
@@ -188,6 +189,11 @@ export default function FootballCardGame() {
       }
 
       syncGameState(roomData);
+
+      // ถ้าอยู่ในหน้า Lobby ให้คอยดึงรายชื่อจากตาราง room_players สดๆ ตลอดเวลา
+      if (gameState === 'lobby') {
+        fetchRoomPlayers(SINGLE_ROOM_ID);
+      }
 
       if (gameState === 'playing' && initialPlayerCount > 0 && !roomData.is_paused) {
         const { data: currentActivePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
@@ -1185,7 +1191,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Countdown State Sync Fix Active.
+        © 2026 L88PER. Lobby Player List Sync Fixed.
       </footer>
 
     </div>
