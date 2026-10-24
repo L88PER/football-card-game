@@ -56,7 +56,7 @@ export default function FootballCardGame() {
 
   const [turnPhase, setTurnPhase] = useState('placing'); 
   const [timeLeft, setTimeLeft] = useState(20);
-  const [isPaused, setIsPaused] = useState(false); // สถานะหยุดเกม
+  const [isPaused, setIsPaused] = useState(false);
   const [lastPlayedCard, setLastPlayedCard] = useState(null);
   const [stealingPlayerId, setStealingPlayerId] = useState(null);
   const [winner, setWinner] = useState(null);
@@ -145,7 +145,6 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // Polling กลางสำหรับซิงค์สถานะห้อง เวลา และสถานะ Pause ทุกๆ 1 วินาที
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -163,7 +162,7 @@ export default function FootballCardGame() {
         return;
       }
 
-      setIsPaused(!!roomData.is_paused); // ซิงค์สถานะการหยุดเกม
+      setIsPaused(!!roomData.is_paused);
 
       if (roomData.status === 'waiting' && gameState !== 'lobby' && gameState !== 'customize') {
         setGameState('lobby');
@@ -242,7 +241,6 @@ export default function FootballCardGame() {
     setGameState('lobby');
   };
 
-  // ฟังก์ชันสำหรับ Admin กด Pause / Resume เกม
   const togglePauseGame = async () => {
     if (userRole !== 'admin') return;
     const newPauseState = !isPaused;
@@ -251,7 +249,6 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
   };
 
-  // ตัวจัดการเวลาฝั่ง Host (จะทำงานก็ต่อเมื่อเกมไม่ถูก Pause เท่านั้น)
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
     if ((gameState !== 'playing' && gameState !== 'countdown') || isPaused) return;
@@ -723,6 +720,26 @@ export default function FootballCardGame() {
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6 flex flex-col justify-between font-sans">
       
+      {/* หน้าต่าง Overlay แจ้งเตือนเมื่อเกมถูก Pause (พร้อมปุ่มกดเล่นต่อสำหรับ Admin ลอยอยู่ด้านบนสุด) */}
+      {gameState === 'playing' && isPaused && (
+        <div className="fixed inset-0 bg-slate-900/85 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-6 text-center">
+          <div className="text-5xl mb-3 animate-bounce">⏸️</div>
+          <h2 className="text-3xl font-bold text-amber-400 mb-2">เกมถูกหยุดชั่วคราว</h2>
+          <p className="text-slate-300 text-sm mb-6">
+            {userRole === 'admin' ? 'คุณสามารถกดปุ่มด้านล่างเพื่อเริ่มเกมต่อได้ทันที' : 'กรุณารอ Admin กดเล่นต่อเพื่อดำเนินการแข่งขัน...'}
+          </p>
+
+          {userRole === 'admin' && (
+            <button 
+              onClick={togglePauseGame}
+              className="px-6 py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl shadow-lg transition cursor-pointer text-base animate-pulse"
+            >
+              ▶️ เล่นต่อ (Resume Game)
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 flex flex-col items-center justify-center">
         
         {gameState === 'adminCreateRoom' && userRole === 'admin' && (
@@ -815,9 +832,9 @@ export default function FootballCardGame() {
 
         {/* หน้าจอเล่นเกมปกติ */}
         {gameState === 'playing' && (
-          <div className="max-w-4xl w-full flex flex-col gap-6 relative">
+          <div className="max-w-4xl w-full flex flex-col gap-6">
             
-            {/* แถบควบคุมพิเศษสำหรับ Admin (ปุ่ม Pause / Resume) */}
+            {/* แถบควบคุมพิเศษสำหรับ Admin (ปุ่ม Pause / Resume ด้านบนสุดของหน้าจอเล่นเกม) */}
             {userRole === 'admin' && (
               <div className="bg-slate-800 p-3 rounded-xl shadow flex justify-between items-center border border-amber-500/50">
                 <span className="text-xs text-amber-400 font-bold">🛡️ Admin Control Panel</span>
@@ -829,15 +846,6 @@ export default function FootballCardGame() {
                 >
                   {isPaused ? '▶️ เล่นต่อ (Resume Game)' : '⏸️ หยุดเกม (Pause Game)'}
                 </button>
-              </div>
-            )}
-
-            {/* หน้าต่างแจ้งเตือนกรณีเกมถูกหยุด (Pause) */}
-            {isPaused && (
-              <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center rounded-xl p-6 text-center">
-                <div className="text-4xl mb-2">⏸️</div>
-                <h2 className="text-2xl font-bold text-amber-400 mb-2">เกมถูกหยุดชั่วคราวโดย Admin</h2>
-                <p className="text-slate-300 text-xs">กรุณารอ Admin กดเล่นต่อเพื่อดำเนินการแข่งขันต่อ...</p>
               </div>
             )}
 
@@ -1070,7 +1078,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Admin Pause Control Active.
+        © 2026 L88PER. Admin Resume Fixed Active.
       </footer>
 
     </div>
