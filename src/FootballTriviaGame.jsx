@@ -56,7 +56,7 @@ export default function FootballCardGame() {
   });
 
   const [turnPhase, setTurnPhase] = useState('placing'); 
-  const [timeLeft, setTimeLeft] = useState(20);
+  const [timeLeft, setTimeLeft] = useState(30); // เปลี่ยนค่าเริ่มต้นเป็น 30 วินาที
   const [isPaused, setIsPaused] = useState(false);
   const [winner, setWinner] = useState(null);
   
@@ -157,7 +157,6 @@ export default function FootballCardGame() {
     }
   };
 
-  // Realtime Subscription สำหรับตาราง rooms (ซิงค์สถานะเกมและโต๊ะทันที)
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -191,7 +190,6 @@ export default function FootballCardGame() {
     };
   }, [isLoggedIn, gameState]);
 
-  // Polling สำรองเพื่อความเสถียร
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -333,11 +331,11 @@ export default function FootballCardGame() {
           await supabase.from('rooms').update({ countdown_time: nextCount }).eq('id', SINGLE_ROOM_ID);
         } else {
           setGameState('playing');
-          setTimeLeft(20);
+          setTimeLeft(30); // เซ็ตเวลาเริ่มเทิร์นแรกเป็น 30 วินาที
           setTurnPhase('placing');
           await supabase.from('rooms').update({ 
             status: 'playing', 
-            time_left: 20, 
+            time_left: 30, 
             turn_phase: 'placing',
             countdown_time: 0 
           }).eq('id', SINGLE_ROOM_ID);
@@ -350,14 +348,15 @@ export default function FootballCardGame() {
           setTimeLeft(nextTime);
           await supabase.from('rooms').update({ time_left: nextTime }).eq('id', SINGLE_ROOM_ID);
         } else {
+          // หมดเวลา 30 วิ เปลี่ยนเทิร์นและรีเซ็ตเวลาเป็น 30 วิ
           const nextTurn = (currentTurn + 1) % roomPlayers.length;
           setCurrentTurn(nextTurn);
-          setTimeLeft(20);
+          setTimeLeft(30);
           setTurnPhase('placing');
 
           await supabase.from('rooms').update({
             current_turn: nextTurn,
-            time_left: 20,
+            time_left: 30,
             turn_phase: 'placing'
           }).eq('id', SINGLE_ROOM_ID);
         }
@@ -571,12 +570,12 @@ export default function FootballCardGame() {
     if (isPaused || !isMyTurn || turnPhase !== 'placing') return;
     const nextTurn = (currentTurn + 1) % roomPlayers.length;
     setCurrentTurn(nextTurn);
-    setTimeLeft(20);
+    setTimeLeft(30); // รีเซ็ตเวลาเป็น 30 วินาทีเมื่อข้ามเทิร์น
     setTurnPhase('placing');
 
     await supabase.from('rooms').update({
       current_turn: nextTurn,
-      time_left: 20,
+      time_left: 30,
       turn_phase: 'placing'
     }).eq('id', SINGLE_ROOM_ID);
   };
@@ -601,13 +600,13 @@ export default function FootballCardGame() {
     const nextTurn = (currentTurn + 1) % roomPlayers.length;
     setRoomPlayers(updatedPlayers);
     setCurrentTurn(nextTurn);
-    setTimeLeft(20);
+    setTimeLeft(30); // รีเซ็ตเวลาเป็น 30 วินาที
     setTurnPhase('placing');
 
     await supabase.from('rooms').update({
       players_data: updatedPlayers,
       current_turn: nextTurn,
-      time_left: 20,
+      time_left: 30,
       turn_phase: 'placing'
     }).eq('id', SINGLE_ROOM_ID);
   };
@@ -619,13 +618,13 @@ export default function FootballCardGame() {
     const nextTurn = (currentTurn + 1) % roomPlayers.length;
     setRoomPlayers(updatedPlayers);
     setCurrentTurn(nextTurn);
-    setTimeLeft(20);
+    setTimeLeft(30); // รีเซ็ตเวลาเป็น 30 วินาที
     setTurnPhase('placing');
 
     await supabase.from('rooms').update({
       players_data: updatedPlayers,
       current_turn: nextTurn,
-      time_left: 20,
+      time_left: 30,
       turn_phase: 'placing'
     }).eq('id', SINGLE_ROOM_ID);
   };
@@ -682,7 +681,7 @@ export default function FootballCardGame() {
       table_cards: initialTable,
       current_turn: 0,
       turn_phase: 'placing',
-      time_left: 20,
+      time_left: 30,
       is_paused: false,
       winner_data: null
     });
