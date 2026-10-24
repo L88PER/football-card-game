@@ -3,12 +3,39 @@ import './index.css';
 import { supabase } from './supabaseClient';
 
 export default function FootballCardGame() {
-  // ระบบ Auth & User
-  const [username, setUsername] = useState('');
+  // ฟังก์ชันช่วยอ่านค่า Cookie
+  const getCookie = (name) => {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return '';
+  };
+
+  // ฟังก์ชันช่วยตั้งค่า Cookie (หมดอายุเมื่อปิดเบราว์เซอร์ Session Cookie)
+  const setCookie = (name, value) => {
+    document.cookie = `${name}=${value}; path=/; SameSite=Lax`;
+  };
+
+  // ฟังก์ชันลบ Cookie ตอน Logout
+  const deleteCookie = (name) => {
+    document.cookie = `${name}=; Max-Age=0; path=/; SameSite=Lax`;
+  };
+
+  // ดึงค่าเริ่มต้นจาก Cookie ทันทีที่โหลดหน้าจอ
+  const [username, setUsername] = useState(() => getAppCookie('fc_username'));
+  const [userRole, setUserRole] = useState(() => getAppCookie('fc_role') || 'player');
+  const [isLoggedIn, setIsLoggedIn] = useState(() => !!getAppCookie('fc_username'));
+
+  function getAppCookie(name) {
+    try {
+      return getCookie(name);
+    } catch {
+      return '';
+    }
+  }
+
   const [password, setPassword] = useState('');
   const [isAdminRegister, setIsAdminRegister] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [userRole, setUserRole] = useState('player'); // 'admin' หรือ 'player'
   const [authMode, setAuthMode] = useState('login'); // 'login' หรือ 'register'
 
   // ระบบห้องและผู้เล่นในห้อง
@@ -46,10 +73,29 @@ export default function FootballCardGame() {
     nationality: ''
   });
 
-  // โหลดข้อมูลจาก Supabase ทันทีที่เปิดเว็บ
+  // โหลดข้อมูล Categories จาก Supabase และจัดการเช็คสถานะห้องเมื่อรีเฟรช
   useEffect(() => {
     loadCategoriesFromDB();
+    if (isLoggedIn && username) {
+      checkAndRestoreSession();
+    }
   }, []);
+
+  // ฟังก์ชันตรวจสอบและดึงผู้เล่นเข้าห้องอัตโนมัติถ้ามี Cookie ค้างอยู่ตอน Refresh
+  const checkAndRestoreSession = async () => {
+    const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
+    if (activePlayers) {
+      const alreadyInRoom = activePlayers.some(p => p.username === username);
+      if (!alreadyInRoom && activePlayers.length < 4) {
+        await supabase.from('room_players').insert([{ 
+          room_id: SINGLE_ROOM_ID, 
+          username: username, 
+          score: 0, 
+          hand: [] 
+        }]);
+      }
+    }
+  };
 
   // Realtime Subscribe สำหรับห้อง Lobby และสถานะเกม
   useEffect(() => {
@@ -68,7 +114,6 @@ export default function FootballCardGame() {
           (payload) => {
             const roomData = payload.new;
             if (roomData.status === 'playing' && roomData.players_data) {
-              // ซิงค์ข้อมูลเกมจาก Host สู่ผู้เล่นทุกคน
               setRoomPlayers(roomData.players_data);
               setTableCards(roomData.table_cards || tableCards);
               setGameState('playing');
@@ -151,7 +196,7 @@ export default function FootballCardGame() {
     setIsAdminRegister(false);
   };
 
-  // ฟังก์ชัน Login เข้าสู่ระบบ
+  // ฟังก์ชัน Login เข้าสู่ระบบและบันทึก Cookie
   const handleLogin = async (e) => {
     e.preventDefault();
     const cleanUsername = username.trim();
@@ -163,7 +208,6 @@ export default function FootballCardGame() {
       return;
     }
 
-    // ตรวจสอบว่าห้องเต็มหรือยัง (สูงสุด 4 คน)
     const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
     if (activePlayers && activePlayers.length >= 4) {
       alert('The room is full (maximum 4 players).');
@@ -187,8 +231,15 @@ export default function FootballCardGame() {
       return;
     }
 
+    const assignedRole = userData.role || 'player';
+
+    // บันทึกลง Cookie
+    setCookie('fc_username', cleanUsername);
+    setCookie('fc_role', assignedRole);
+
+    setUsername(cleanUsername);
+    setUserRole(assignedRole);
     setIsLoggedIn(true);
-    setUserRole(userData.role || 'player');
     setGameState('lobby');
   };
 
@@ -196,17 +247,21 @@ export default function FootballCardGame() {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) {
       setRoomPlayers(playersData);
-      if (isLoggedIn && !playersData.some(p => p.username === username)) {
-        handleLogoutClean();
+      if (isLoggedIn && username && !playersData.some(p => p.username === username)) {
+        // หากถูกเตะหรือหลุดออกจากห้องแต่ยังเปิดเว็บอยู่
+        checkAndRestoreSession();
       }
     }
   };
 
-  // ออกจากห้อง / ล้าง Session
+  // ออกจากระบบและลบ Cookie ทิ้ง
   const handleLogoutClean = async () => {
     if (username) {
       await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
     }
+    deleteCookie('fc_username');
+    deleteCookie('fc_role');
+
     setIsLoggedIn(false);
     setUsername('');
     setPassword('');
@@ -215,7 +270,7 @@ export default function FootballCardGame() {
     setGameState('lobby');
   };
 
-  // ฟังก์ชันอัปโหลดรูปภาพลง Supabase Storage และอัปเดต SQL
+  // ฟังก์ชันอัปโหลดรูปภาพลง Supabase Storage
   const handleImageUpload = async (categoryKey, itemIndex, e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -330,7 +385,7 @@ export default function FootballCardGame() {
           hand.push({ type: randomKey, value: randomItem.value, image: randomItem.image });
         }
       }
-      return { id: idx + 1, name: p.username, score: 0, hand };
+      return { id: idx + 1, name: p.username || p.name, score: 0, hand };
     });
 
     const posList = categories.position;
@@ -348,7 +403,6 @@ export default function FootballCardGame() {
     setFeedback('');
     setLastPlayedCard(null);
 
-    // บันทึกลงตาราง rooms เพื่อส่งสถานะให้ผู้เล่นคนอื่นซิงค์ตาม
     await supabase.from('rooms').upsert({ 
       id: SINGLE_ROOM_ID,
       name: 'Main Lobby',
@@ -360,73 +414,6 @@ export default function FootballCardGame() {
     });
 
     setGameState('playing');
-  };
-
-  const handleVoteRefresh = (playerId) => {
-    if (refreshVotes.includes(playerId)) return;
-    const newVotes = [...refreshVotes, playerId];
-    setRefreshVotes(newVotes);
-
-    if (newVotes.length >= roomPlayers.length) {
-      randomizeTableCards();
-    }
-  };
-
-  // ควบคุม Timer เฉพาะช่วง placing (20s) และ stealing (10s) เท่านั้น
-  useEffect(() => {
-    if (gameState !== 'playing') return;
-    if (turnPhase === 'answering') return;
-
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev > 1) return prev - 1;
-
-        if (turnPhase === 'placing') {
-          triggerTransition('หมดเวลาวางการ์ด (20s)! เทิร์นตกไปผู้เล่นถัดไป');
-          return 0;
-        } else if (turnPhase === 'stealing') {
-          handleNoStealTimeout();
-          return 0;
-        }
-        return 0;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [gameState, turnPhase, roomPlayers, lastPlayedCard]);
-
-  useEffect(() => {
-    if (gameState !== 'transition') return;
-
-    const transTimer = setInterval(() => {
-      setTransitionTime(prev => {
-        if (prev > 1) return prev - 1;
-        
-        // ส่งต่อเทิร์น
-        setStealingPlayerId(null);
-        setFeedback('');
-        setLastPlayedCard(null);
-        setTurnPhase('placing');
-        setTimeLeft(20);
-        setGameState('playing');
-        return 0;
-      });
-    }, 1000);
-
-    return () => clearInterval(transTimer);
-  }, [gameState]);
-
-  // หา index ปัจจุบันของเทิร์น
-  const currentTurnIdx = 0; // ปรับตามความเหมาะสมของลอจิกเทิร์นเดิม
-
-  const triggerTransition = (msg) => {
-    setFeedback(msg);
-    setTransitionTime(5);
-    setGameState('transition');
-  };
-
-  const handleNoStealTimeout = () => {
-    triggerTransition(`ตอบไม่ได้และไม่มีคน Steal (-1 คะแนน)`);
   };
 
   const isHost = roomPlayers.length > 0 && roomPlayers[0].username === username;
@@ -535,7 +522,7 @@ export default function FootballCardGame() {
                   onClick={handleLogoutClean}
                   className="w-1/2 py-3 bg-red-600/80 hover:bg-red-600 font-bold rounded-xl transition cursor-pointer text-sm"
                 >
-                  Leave Room
+                  Logout
                 </button>
                 {isHost ? (
                   <button 
