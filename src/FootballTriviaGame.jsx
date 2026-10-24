@@ -45,6 +45,7 @@ export default function FootballCardGame() {
 
   const [gameState, setGameState] = useState('lobby'); // lobby, customize, countdown, playing, transition, finished
   const [countdownTime, setCountdownTime] = useState(10);
+  const [initialPlayerCount, setInitialPlayerCount] = useState(0); // บันทึกจำนวนคนตอนเริ่มเกม
 
   const [currentTurn, setCurrentTurn] = useState(0); 
   const [tableCards, setTableCards] = useState({
@@ -53,7 +54,7 @@ export default function FootballCardGame() {
     nationality: null
   });
 
-  const [turnPhase, setTurnPhase] = useState('placing'); // placing, answering, stealing, paused
+  const [turnPhase, setTurnPhase] = useState('placing'); 
   const [timeLeft, setTimeLeft] = useState(20);
   const [lastPlayedCard, setLastPlayedCard] = useState(null);
   const [stealingPlayerId, setStealingPlayerId] = useState(null);
@@ -79,7 +80,7 @@ export default function FootballCardGame() {
     const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
     if (activePlayers) {
       const alreadyInRoom = activePlayers.some(p => p.username === username);
-      if (!alreadyInRoom && activePlayers.length < 4) {
+      if (!alreadyInRoom && activePlayers.length < 4 && gameState === 'lobby') {
         await supabase.from('room_players').insert([{ 
           room_id: SINGLE_ROOM_ID, 
           username: username, 
@@ -111,7 +112,7 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // 2. Polling เช็คสถานะห้องทุกๆ 1 วินาที
+  // 2. Polling เช็คสถานะห้อง และเช็คว่าผู้เล่นหลุดระหว่างเกมหรือไม่
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -123,21 +124,66 @@ export default function FootballCardGame() {
         .single();
 
       if (roomData) {
+        // ถ้าห้องถูกลบ (เพราะคนไม่ครบหรือ Admin ปิดห้อง) ให้ดีดผู้เล่นกลับ Lobby
+        if (roomData.status === 'deleted' || !roomData.id) {
+          handleForceResetToLobby('ห้องถูกปิดเนื่องจากผู้เล่นไม่ครบตามจำนวนตอนเริ่มเกม');
+          return;
+        }
+
         if (roomData.status === 'countdown' && gameState === 'lobby') {
-          if (roomData.players_data) setRoomPlayers(roomData.players_data);
+          if (roomData.players_data) {
+            setRoomPlayers(roomData.players_data);
+            setInitialPlayerCount(roomData.players_data.length);
+          }
           if (roomData.table_cards) setTableCards(roomData.table_cards);
           setGameState('countdown');
           setCountdownTime(10);
         } else if (roomData.status === 'playing' && (gameState === 'lobby' || gameState === 'countdown')) {
-          if (roomData.players_data) setRoomPlayers(roomData.players_data);
+          if (roomData.players_data) {
+            setRoomPlayers(roomData.players_data);
+            if (initialPlayerCount === 0) setInitialPlayerCount(roomData.players_data.length);
+          }
           if (roomData.table_cards) setTableCards(roomData.table_cards);
           setGameState('playing');
+        }
+
+        // ถ้าระหว่างเล่นเกม (playing) แล้วจำนวนคนใน room_players น้อยกว่าตอนเริ่มเกม ให้จบเกมและทำลายห้องทิ้งทันที
+        if (gameState === 'playing' && initialPlayerCount > 0) {
+          const { data: currentActivePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
+          if (currentActivePlayers && currentActivePlayers.length < initialPlayerCount) {
+            await destroyRoomAndReset('มีผู้เล่นออกจากห้องระหว่างเกม เกมถูกยกเลิก');
+          }
         }
       }
     }, 1000);
 
     return () => clearInterval(roomInterval);
-  }, [isLoggedIn, gameState]);
+  }, [isLoggedIn, gameState, initialPlayerCount]);
+
+  const destroyRoomAndReset = async (reason) => {
+    await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
+    await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID);
+    
+    // สร้างห้อง Main Lobby เปล่าๆ ขึ้นมาใหม่ทันทีเพื่อให้ Admin สร้างใหม่ได้
+    await supabase.from('rooms').insert([{
+      id: SINGLE_ROOM_ID,
+      name: 'Main Lobby',
+      host: '',
+      status: 'waiting'
+    }]);
+
+    alert(reason);
+    setGameState('lobby');
+    setInitialPlayerCount(0);
+    setRoomPlayers([]);
+  };
+
+  const handleForceResetToLobby = (msg) => {
+    alert(msg);
+    setGameState('lobby');
+    setInitialPlayerCount(0);
+    setRoomPlayers([]);
+  };
 
   // นับถอยหลัง 10 วิ ก่อนเข้าเกม
   useEffect(() => {
@@ -154,7 +200,7 @@ export default function FootballCardGame() {
     return () => clearInterval(timer);
   }, [gameState]);
 
-  // ควบคุม Timer ในหน้าเล่นเกม (Placing 20s และ Stealing 10s)
+  // ควบคุม Timer ในหน้าเล่นเกม
   useEffect(() => {
     if (gameState !== 'playing') return;
     if (turnPhase === 'answering') return;
@@ -177,7 +223,6 @@ export default function FootballCardGame() {
     return () => clearInterval(timer);
   }, [gameState, turnPhase, currentTurn, lastPlayedCard]);
 
-  // หน้าจอ Transition ระหว่างเทิร์น (5 วิ)
   useEffect(() => {
     if (gameState !== 'transition') return;
 
@@ -430,7 +475,6 @@ export default function FootballCardGame() {
     setNewValues({ ...newValues, [categoryKey]: '' });
   };
 
-  // ลอจิกการเล่นเกม (วางการ์ด, ตอบถูก/ผิด, Steal)
   const handleSelectCard = (cardIdx) => {
     if (turnPhase !== 'placing') return;
     executePlayCard(cardIdx);
@@ -513,7 +557,12 @@ export default function FootballCardGame() {
     }
   };
 
+  // เฉพาะ Admin เท่านั้นที่มีสิทธิ์กด Start Game
   const startGameHost = async () => {
+    if (userRole !== 'admin') {
+      alert('Only Admin can start the game.');
+      return;
+    }
     if (roomPlayers.length < 2) {
       alert('Need at least 2 players to start the game.');
       return;
@@ -543,6 +592,7 @@ export default function FootballCardGame() {
     };
 
     setRoomPlayers(updatedPlayers);
+    setInitialPlayerCount(updatedPlayers.length);
     setTableCards(initialTable);
     setCurrentTurn(0);
     setWinner(null);
@@ -552,7 +602,7 @@ export default function FootballCardGame() {
     await supabase.from('rooms').upsert({ 
       id: SINGLE_ROOM_ID,
       name: 'Main Lobby',
-      host: roomPlayers[0].username,
+      host: username,
       status: 'countdown', 
       players_data: updatedPlayers,
       table_cards: initialTable,
@@ -562,8 +612,6 @@ export default function FootballCardGame() {
     setGameState('countdown');
     setCountdownTime(10);
   };
-
-  const isHost = roomPlayers.length > 0 && roomPlayers[0].username === username;
 
   if (!isLoggedIn) {
     return (
@@ -647,7 +695,7 @@ export default function FootballCardGame() {
               <div className="space-y-2">
                 {roomPlayers.map((p, idx) => (
                   <div key={idx} className="flex justify-between items-center bg-slate-700 p-2 rounded-lg text-sm">
-                    <span>{idx === 0 ? '👑' : '👤'} {p.username || p.name} {idx === 0 ? '(Host)' : ''}</span>
+                    <span>{userRole === 'admin' && idx === 0 ? '👑' : '👤'} {p.username || p.name}</span>
                   </div>
                 ))}
               </div>
@@ -670,7 +718,7 @@ export default function FootballCardGame() {
                 >
                   Logout
                 </button>
-                {isHost ? (
+                {userRole === 'admin' ? (
                   <button 
                     onClick={startGameHost}
                     disabled={roomPlayers.length < 2}
@@ -680,7 +728,7 @@ export default function FootballCardGame() {
                   </button>
                 ) : (
                   <div className="w-1/2 flex items-center justify-center text-xs text-slate-400 italic">
-                    Waiting for host...
+                    Waiting for Admin to start...
                   </div>
                 )}
               </div>
@@ -714,7 +762,7 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* หน้าจอเล่นเกมปกติ (มีปุ่มวางการ์ด ปุ่มตอบ และปุ่ม Steal ครบถ้วน) */}
+        {/* หน้าจอเล่นเกมปกติ */}
         {gameState === 'playing' && (
           <div className="max-w-4xl w-full flex flex-col gap-6">
             
@@ -921,7 +969,7 @@ export default function FootballCardGame() {
             <p className="text-xl text-yellow-400 font-bold mb-6">{winner?.username || winner?.name} wins the game!</p>
             
             <button 
-              onClick={() => setGameState('lobby')}
+              onClick={() => destroyRoomAndReset('จบเกม')}
               className="w-full mt-4 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer"
             >
               Back to Lobby
@@ -932,7 +980,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. All rights reserved.
+        © 2026 L88PER. Admin-Controlled Room & Auto-Cleanup Active.
       </footer>
 
     </div>
