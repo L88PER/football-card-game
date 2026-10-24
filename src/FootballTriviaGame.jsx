@@ -43,7 +43,7 @@ export default function FootballCardGame() {
     nationality: []
   });
 
-  const [gameState, setGameState] = useState('adminCreateRoom'); // adminCreateRoom, lobby, customize, countdown, playing, transition, finished
+  const [gameState, setGameState] = useState('adminCreateRoom'); 
   const [countdownTime, setCountdownTime] = useState(10);
   const [initialPlayerCount, setInitialPlayerCount] = useState(0);
 
@@ -115,15 +115,25 @@ export default function FootballCardGame() {
         }]);
       }
     }
+    fetchRoomPlayers(SINGLE_ROOM_ID);
   };
 
+  const fetchRoomPlayers = async (roomId) => {
+    const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
+    if (playersData) {
+      setRoomPlayers(playersData);
+    }
+  };
+
+  // Realtime Subscribe ฟังการเปลี่ยนแปลงของผู้เล่นในห้องแบบสดๆ
   useEffect(() => {
     if (isLoggedIn) {
       const channel = supabase.channel(`room-fixed-${SINGLE_ROOM_ID}`)
         .on(
           'postgres_changes', 
           { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${SINGLE_ROOM_ID}` }, 
-          () => {
+          (payload) => {
+            // ดึงรายชื่อผู้เล่นใหม่ทันทีที่มีการเปลี่ยนแปลง (Insert/Delete)
             fetchRoomPlayers(SINGLE_ROOM_ID);
           }
         )
@@ -137,6 +147,7 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
+  // Polling เช็คสถานะห้องและสถานะเกม
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -205,7 +216,6 @@ export default function FootballCardGame() {
     setRoomPlayers([]);
   };
 
-  // Admin สร้างห้องใหม่ และ Join เข้าห้องทันที
   const handleAdminCreateRoom = async () => {
     await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
     await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID);
@@ -417,13 +427,6 @@ export default function FootballCardGame() {
     } else {
       await joinRoomProcess(cleanUsername);
       setGameState('lobby');
-    }
-  };
-
-  const fetchRoomPlayers = async (roomId) => {
-    const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
-    if (playersData) {
-      setRoomPlayers(playersData);
     }
   };
 
@@ -728,7 +731,6 @@ export default function FootballCardGame() {
       
       <div className="flex-1 flex flex-col items-center justify-center">
         
-        {/* หน้าจอ Admin สร้างห้อง */}
         {gameState === 'adminCreateRoom' && userRole === 'admin' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
             <h1 className="text-2xl font-bold mb-2 text-emerald-400">🛡️ Admin Control Panel</h1>
@@ -1047,7 +1049,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Admin-Created Rooms & Auto-Join Active.
+        © 2026 L88PER. Realtime Player Sync Active.
       </footer>
 
     </div>
