@@ -69,15 +69,15 @@ export default function FootballCardGame() {
     loadCategoriesFromDB();
   }, [isLoggedIn]);
 
+  // ฟังก์ชันนี้จะซิงค์เฉพาะตอนที่ผู้เล่นอยู่ใน Lobby หรือกำลังเล่นเกมอยู่แล้วเท่านั้น
   const syncGameState = (roomData) => {
     if (!roomData) {
       setGameState('mainMenu');
       return;
     }
 
-    if (roomData.status === 'waiting' && gameState !== 'countdown' && gameState !== 'playing' && gameState !== 'customize') {
-      setGameState('lobby');
-    } else if (roomData.status === 'countdown') {
+    // ถ้าเกมเริ่มนับถอยหลังหรือกำลังเล่น ให้ดึงผู้เล่นทุกคนเข้าสู่หน้าเล่นเกมทันที
+    if (roomData.status === 'countdown') {
       setGameState('countdown');
       if (roomData.countdown_time !== undefined) setCountdownTime(roomData.countdown_time);
     } else if (roomData.status === 'playing') {
@@ -161,6 +161,7 @@ export default function FootballCardGame() {
     };
   }, [isLoggedIn]);
 
+  // Polling กลาง: เช็คสถานะห้องเพื่ออัปเดตตอนอยู่ในห้อง แต่ไม่บังคับพาเข้า Lobby เอง
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -179,6 +180,7 @@ export default function FootballCardGame() {
         return;
       }
 
+      // เช็คว่า Admin ยังอยู่ในห้องไหม (ถ้า Admin ออก ให้ลบห้องทิ้ง)
       const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
       if (activePlayers && activePlayers.length > 0) {
         const adminStillInRoom = activePlayers.some(p => p.username.toLowerCase() === roomData.host?.toLowerCase());
