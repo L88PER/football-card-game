@@ -69,14 +69,16 @@ export default function FootballCardGame() {
     loadCategoriesFromDB();
   }, [isLoggedIn]);
 
-  // ฟังก์ชันนี้จะซิงค์เฉพาะตอนที่ผู้เล่นอยู่ใน Lobby หรือกำลังเล่นเกมอยู่แล้วเท่านั้น
+  // ฟังก์ชันซิงค์เฉพาะตอนที่อยู่ในเกม หรือตอนกำลังนับถอยหลัง
   const syncGameState = (roomData) => {
     if (!roomData) {
-      setGameState('mainMenu');
+      if (gameState !== 'mainMenu' && gameState !== 'customize') {
+        setGameState('mainMenu');
+        setRoomPlayers([]);
+      }
       return;
     }
 
-    // ถ้าเกมเริ่มนับถอยหลังหรือกำลังเล่น ให้ดึงผู้เล่นทุกคนเข้าสู่หน้าเล่นเกมทันที
     if (roomData.status === 'countdown') {
       setGameState('countdown');
       if (roomData.countdown_time !== undefined) setCountdownTime(roomData.countdown_time);
@@ -149,19 +151,19 @@ export default function FootballCardGame() {
         'postgres_changes', 
         { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${SINGLE_ROOM_ID}` }, 
         () => {
-          fetchRoomPlayers(SINGLE_ROOM_ID);
+          if (gameState === 'lobby') {
+            fetchRoomPlayers(SINGLE_ROOM_ID);
+          }
         }
       )
       .subscribe();
 
-    fetchRoomPlayers(SINGLE_ROOM_ID);
-
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [isLoggedIn]);
+  }, [isLoggedIn, gameState]);
 
-  // Polling กลาง: เช็คสถานะห้องเพื่ออัปเดตตอนอยู่ในห้อง แต่ไม่บังคับพาเข้า Lobby เอง
+  // Polling กลางเช็คสถานะห้อง (ไม่บังคับเด้งเข้า Lobby เองเด็ดขาด)
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -226,8 +228,9 @@ export default function FootballCardGame() {
     if (username) {
       if (userRole === 'admin') {
         await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
+      } else {
+        await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
       }
-      await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
     }
     setGameState('mainMenu');
     setRoomPlayers([]);
