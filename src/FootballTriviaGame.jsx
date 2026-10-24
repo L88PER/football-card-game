@@ -87,7 +87,7 @@ export default function FootballCardGame() {
     }
   };
 
-  // Realtime Subscribe สำหรับซิงค์สถานะห้องและผู้เล่นทั้งหมด
+  // 1. ระบบ Realtime Subscribe สำหรับซิงค์ผู้เล่น
   useEffect(() => {
     if (isLoggedIn) {
       const channel = supabase.channel(`room-fixed-${SINGLE_ROOM_ID}`)
@@ -96,24 +96,6 @@ export default function FootballCardGame() {
           { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${SINGLE_ROOM_ID}` }, 
           () => {
             fetchRoomPlayers(SINGLE_ROOM_ID);
-          }
-        )
-        .on(
-          'postgres_changes', 
-          { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${SINGLE_ROOM_ID}` }, 
-          (payload) => {
-            const roomData = payload.new;
-            // ถ้าห้องเปลี่ยนสถานะเป็น countdown หรือ playing ให้ผู้เล่นทุกคนซิงค์ตามทันที
-            if (roomData.status === 'countdown') {
-              if (roomData.players_data) setRoomPlayers(roomData.players_data);
-              if (roomData.table_cards) setTableCards(roomData.table_cards);
-              setGameState('countdown');
-              setCountdownTime(10);
-            } else if (roomData.status === 'playing') {
-              if (roomData.players_data) setRoomPlayers(roomData.players_data);
-              if (roomData.table_cards) setTableCards(roomData.table_cards);
-              setGameState('playing');
-            }
           }
         )
         .subscribe();
@@ -126,14 +108,41 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // ระบบนับถอยหลัง 10 วินาทีก่อนเข้าเกมจริง (รันทั้ง Host และ Player พร้อมกัน)
+  // 2. ระบบ Polling เช็คสถานะห้องทุกๆ 1 วินาที (แก้ปัญหาฝั่ง Player ไม่ยอมเปลี่ยนหน้าตาม Host)
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    const roomInterval = setInterval(async () => {
+      const { data: roomData } = await supabase
+        .from('rooms')
+        .select('*')
+        .eq('id', SINGLE_ROOM_ID)
+        .single();
+
+      if (roomData) {
+        if (roomData.status === 'countdown' && gameState === 'lobby') {
+          if (roomData.players_data) setRoomPlayers(roomData.players_data);
+          if (roomData.table_cards) setTableCards(roomData.table_cards);
+          setGameState('countdown');
+          setCountdownTime(10);
+        } else if (roomData.status === 'playing' && (gameState === 'lobby' || gameState === 'countdown')) {
+          if (roomData.players_data) setRoomPlayers(roomData.players_data);
+          if (roomData.table_cards) setTableCards(roomData.table_cards);
+          setGameState('playing');
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(roomInterval);
+  }, [isLoggedIn, gameState]);
+
+  // ระบบนับถอยหลัง 10 วินาทีก่อนเข้าเกมจริง (รันเฉพาะตอนอยู่หน้า countdown)
   useEffect(() => {
     if (gameState !== 'countdown') return;
 
     const timer = setInterval(() => {
       setCountdownTime(prev => {
         if (prev > 1) return prev - 1;
-        // เมื่อนับครบ 10 วิ เปลี่ยนเป็นหน้าเล่นเกม
         setGameState('playing');
         return 0;
       });
@@ -352,7 +361,7 @@ export default function FootballCardGame() {
     setNewValues({ ...newValues, [categoryKey]: '' });
   };
 
-  // Host กด Start Game -> สั่งอัปเดตสถานะห้องเป็น 'countdown' เพื่อให้ทุกคนนับถอยหลังพร้อมกัน
+  // Host กด Start Game -> อัปเดตสถานะห้องเป็น 'countdown'
   const startGameHost = async () => {
     if (roomPlayers.length < 2) {
       alert('Need at least 2 players to start the game.');
@@ -388,7 +397,6 @@ export default function FootballCardGame() {
     setFeedback('');
     setLastPlayedCard(null);
 
-    // บันทึกลง Supabase ให้ status เป็น 'countdown'
     await supabase.from('rooms').upsert({ 
       id: SINGLE_ROOM_ID,
       name: 'Main Lobby',
