@@ -44,7 +44,7 @@ export default function FootballCardGame() {
   });
 
   const [gameState, setGameState] = useState('mainMenu'); 
-  const [countdownTime, setCountdownTime] = useState(0); // เริ่มนับจาก 0 ไปถึง 10
+  const [countdownTime, setCountdownTime] = useState(0); // นับจาก 0 ถึง 5
   const [initialPlayerCount, setInitialPlayerCount] = useState(0);
 
   const [currentTurn, setCurrentTurn] = useState(0); 
@@ -290,7 +290,7 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
   };
 
-  // ตัวจัดการเวลา Countdown (จาก 0 ไปถึง 10) เฉพาะ Admin
+  // ตัวจัดการเวลา Countdown (จาก 0 ถึง 5 วิ) เฉพาะ Admin
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
     if (isPaused) return;
@@ -298,7 +298,7 @@ export default function FootballCardGame() {
 
     const timer = setInterval(async () => {
       if (gameState === 'countdown') {
-        if (countdownTime < 10) {
+        if (countdownTime < 5) {
           const nextCount = countdownTime + 1;
           setCountdownTime(nextCount);
           await supabase.from('rooms').update({ countdown_time: nextCount }).eq('id', SINGLE_ROOM_ID);
@@ -827,17 +827,17 @@ export default function FootballCardGame() {
           </div>
         )}
 
-        {/* Countdown with Large Loading Bar (0 to 10 with Rotating Football) */}
+        {/* Countdown with 5s Loading Bar & Rotating Football */}
         {gameState === 'countdown' && (
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl w-full text-center">
             <h2 className="text-lg font-black mb-1 text-emerald-400">🚀 เตรียมตัวให้พร้อม!</h2>
             <p className="text-slate-400 text-xs mb-8">กำลังเข้าสู่สนามแข่งขัน...</p>
             
-            {/* Large Loading Bar (0% to 100%) */}
-            <div className="relative w-full bg-slate-950 h-7 rounded-full overflow-visible p-1 border border-slate-800 mb-6 shadow-inner">
+            {/* Large Loading Bar (0% to 100% in 5s) */}
+            <div className="relative w-full bg-slate-950 h-7 rounded-full overflow-visible p-1 border border-slate-800 mb-4 shadow-inner">
               <div 
                 className="bg-gradient-to-r from-emerald-600 to-teal-400 h-full rounded-full transition-all duration-1000 ease-linear shadow-lg relative"
-                style={{ width: `${(countdownTime / 10) * 100}%` }}
+                style={{ width: `${(countdownTime / 5) * 100}%` }}
               >
                 {/* Rotating Football at the tip */}
                 <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-8 h-8 bg-slate-900 rounded-full border-2 border-emerald-400 flex items-center justify-center text-base shadow-lg animate-spin">
@@ -845,8 +845,6 @@ export default function FootballCardGame() {
                 </div>
               </div>
             </div>
-
-            <p className="text-xs font-bold text-yellow-400">{countdownTime} / 10 วินาที</p>
           </div>
         )}
 
