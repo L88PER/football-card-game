@@ -57,7 +57,6 @@ export default function FootballCardGame() {
   const [turnPhase, setTurnPhase] = useState('placing'); 
   const [timeLeft, setTimeLeft] = useState(20);
   const [isPaused, setIsPaused] = useState(false);
-  const [lastPlayedCard, setLastPlayedCard] = useState(null);
   const [winner, setWinner] = useState(null);
   
   const [newValues, setNewValues] = useState({
@@ -107,7 +106,7 @@ export default function FootballCardGame() {
       if (roomData.winner_data) setWinner(roomData.winner_data);
     }
 
-    if (roomData.status !== 'waiting' && roomData.players_data) {
+    if (roomData.players_data) {
       setRoomPlayers(roomData.players_data);
       setInitialPlayerCount(roomData.players_data.length);
     }
@@ -142,7 +141,7 @@ export default function FootballCardGame() {
 
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
-    if (playersData) {
+    if (playersData && gameState === 'lobby') {
       setRoomPlayers(playersData);
     }
   };
@@ -167,6 +166,7 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
+  // Polling กลางสำหรับซิงค์สถานะห้องทุก 1 วินาที
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -189,21 +189,10 @@ export default function FootballCardGame() {
       if (gameState === 'lobby') {
         fetchRoomPlayers(SINGLE_ROOM_ID);
       }
-
-      if (gameState === 'playing' && initialPlayerCount > 0 && !roomData.is_paused) {
-        const { data: currentActivePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
-        if (currentActivePlayers && currentActivePlayers.length < initialPlayerCount) {
-          if (userRole === 'admin') {
-            await destroyRoomAndReset('มีผู้เล่นออกจากห้องระหว่างเกม เกมถูกยกเลิก');
-          } else {
-            handleForceResetToLobby('มีผู้เล่นออกจากห้องระหว่างเกม เกมถูกยกเลิก');
-          }
-        }
-      }
     }, 1000);
 
     return () => clearInterval(roomInterval);
-  }, [isLoggedIn, gameState, initialPlayerCount, userRole]);
+  }, [isLoggedIn, gameState, userRole]);
 
   const destroyRoomAndReset = async (reason) => {
     await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
@@ -251,53 +240,53 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
   };
 
-  // ตัวจัดการเวลาเฉพาะ Admin (Host) รัน Timer กลาง
+  // ตัวจัดการเวลา (เฉพาะ Admin เป็นคนรัน Timer และอัปเดตลง Database เพื่อป้องกันเวลาบัค)
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
     if (isPaused) return;
+    if (gameState !== 'countdown' && gameState !== 'playing') return;
 
     const timer = setInterval(async () => {
       if (gameState === 'countdown') {
-        const { data: rData } = await supabase.from('rooms').select('countdown_time').eq('id', SINGLE_ROOM_ID).single();
-        const curCount = rData?.countdown_time !== undefined ? rData.countdown_time : 10;
-
-        if (curCount > 1) {
-          const nextCount = curCount - 1;
+        if (countdownTime > 1) {
+          const nextCount = countdownTime - 1;
           setCountdownTime(nextCount);
           await supabase.from('rooms').update({ countdown_time: nextCount }).eq('id', SINGLE_ROOM_ID);
         } else {
           setGameState('playing');
+          setTimeLeft(20);
+          setTurnPhase('placing');
           await supabase.from('rooms').update({ 
             status: 'playing', 
             time_left: 20, 
-            turn_phase: 'placing', 
-            countdown_time: 10 
+            turn_phase: 'placing' 
           }).eq('id', SINGLE_ROOM_ID);
         }
       } else if (gameState === 'playing') {
-        if (turnPhase === 'answering') return;
+        if (turnPhase === 'answering') return; // ช่วงตอบไม่ต้องลดเวลา
 
-        const { data: rData } = await supabase.from('rooms').select('time_left').eq('id', SINGLE_ROOM_ID).single();
-        const curTime = rData?.time_left !== undefined ? rData.time_left : 20;
-
-        if (curTime > 1) {
-          const nextTime = curTime - 1;
+        if (timeLeft > 1) {
+          const nextTime = timeLeft - 1;
           setTimeLeft(nextTime);
           await supabase.from('rooms').update({ time_left: nextTime }).eq('id', SINGLE_ROOM_ID);
         } else {
-          if (turnPhase === 'placing') {
-            const nextTurn = (currentTurn + 1) % roomPlayers.length;
-            setCurrentTurn(nextTurn);
-            setTimeLeft(20);
-            setTurnPhase('placing');
-            await supabase.from('rooms').update({ current_turn: nextTurn, time_left: 20, turn_phase: 'placing' }).eq('id', SINGLE_ROOM_ID);
-          }
+          // หมดเวลาวางการ์ด (20s) -> ข้ามเทิร์นไปคนถัดไปอัตโนมัติ
+          const nextTurn = (currentTurn + 1) % roomPlayers.length;
+          setCurrentTurn(nextTurn);
+          setTimeLeft(20);
+          setTurnPhase('placing');
+
+          await supabase.from('rooms').update({
+            current_turn: nextTurn,
+            time_left: 20,
+            turn_phase: 'placing'
+          }).eq('id', SINGLE_ROOM_ID);
         }
       }
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [gameState, turnPhase, currentTurn, roomPlayers, userRole, isPaused]);
+  }, [gameState, countdownTime, timeLeft, turnPhase, currentTurn, roomPlayers, userRole, isPaused]);
 
   const loadCategoriesFromDB = async () => {
     const { data, error } = await supabase
@@ -522,7 +511,6 @@ export default function FootballCardGame() {
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, hand: updatedHand } : p);
     setRoomPlayers(updatedPlayers);
     setTableCards(updatedTable);
-    setLastPlayedCard(card);
     setTurnPhase('answering');
 
     await supabase.from('rooms').update({
@@ -577,7 +565,6 @@ export default function FootballCardGame() {
     }).eq('id', SINGLE_ROOM_ID);
   };
 
-  // ตอบผิด: หัก -1 คะแนน แล้วเปลี่ยนเทิร์นให้ผู้เล่นถัดไปทันที (ไม่มี Steal)
   const handleOwnerAnswerWrong = async () => {
     if (isPaused || !isMyTurn) return;
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: (p.score || 0) - 1 } : p);
@@ -617,7 +604,7 @@ export default function FootballCardGame() {
           hand.push({ type: randomKey, value: randomItem.value, image: randomItem.image });
         }
       }
-      return { id: idx + 1, username: p.username || p.name, name: p.username || p.name, score: 0, hand };
+      return { id: idx + 1, username: p.username, score: 0, hand };
     });
 
     const posList = categories.position;
@@ -777,7 +764,7 @@ export default function FootballCardGame() {
               <div className="space-y-2">
                 {roomPlayers.map((p, idx) => (
                   <div key={idx} className="flex justify-between items-center bg-slate-700 p-2 rounded-lg text-sm">
-                    <span>{userRole === 'admin' && p.username === username ? '👑' : '👤'} {p.username || p.name}</span>
+                    <span>{userRole === 'admin' && p.username === username ? '👑' : '👤'} {p.username}</span>
                   </div>
                 ))}
               </div>
@@ -863,14 +850,14 @@ export default function FootballCardGame() {
               <div>
                 <span className="text-slate-400 text-sm">Current Turn:</span>
                 <div className="text-xl font-bold text-emerald-400">
-                  {roomPlayers[currentTurn]?.username || roomPlayers[currentTurn]?.name} {isMyTurn ? '(Your Turn!)' : ''}
+                  {roomPlayers[currentTurn]?.username} {isMyTurn ? '(Your Turn!)' : ''}
                 </div>
               </div>
               <div className="flex gap-4 items-center">
                 <div className="flex gap-4">
                   {roomPlayers.map((p, idx) => (
                     <div key={idx} className={`text-center px-3 py-1 rounded-lg ${idx === currentTurn ? 'bg-emerald-500/20 border border-emerald-500' : ''}`}>
-                      <div className="text-xs text-slate-400">{p.username || p.name}</div>
+                      <div className="text-xs text-slate-400">{p.username}</div>
                       <div className={`text-lg font-bold ${(p.score || 0) < 0 ? 'text-red-400' : 'text-yellow-400'}`}>
                         {p.score || 0} pts ({p.hand?.length || 0} cards)
                       </div>
@@ -932,7 +919,7 @@ export default function FootballCardGame() {
 
               {!isMyTurn && turnPhase === 'placing' && (
                 <div className="text-center text-slate-400 text-sm italic">
-                  ⏳ รอ {roomPlayers[currentTurn]?.username || roomPlayers[currentTurn]?.name} วางการ์ด...
+                  ⏳ รอ {roomPlayers[currentTurn]?.username} วางการ์ด...
                 </div>
               )}
 
@@ -952,7 +939,7 @@ export default function FootballCardGame() {
 
               {!isMyTurn && turnPhase === 'answering' && (
                 <div className="text-center text-slate-300 text-sm italic">
-                  🎤 {roomPlayers[currentTurn]?.username || roomPlayers[currentTurn]?.name} กำลังตอบคำถาม...
+                  🎤 {roomPlayers[currentTurn]?.username} กำลังตอบคำถาม...
                 </div>
               )}
             </div>
@@ -1054,7 +1041,7 @@ export default function FootballCardGame() {
         {gameState === 'finished' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
             <h2 className="text-3xl font-bold mb-2 text-emerald-400">🎉 Winner!</h2>
-            <p className="text-xl text-yellow-400 font-bold mb-6">{winner?.username || winner?.name} wins the game!</p>
+            <p className="text-xl text-yellow-400 font-bold mb-6">{winner?.username} wins the game!</p>
             
             <div className="flex flex-col gap-3">
               {userRole === 'admin' && (
@@ -1078,7 +1065,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. No-Steal Version Active.
+        © 2026 L88PER. Timer & Hand Sync Fixed.
       </footer>
 
     </div>
