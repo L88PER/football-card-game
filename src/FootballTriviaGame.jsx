@@ -67,21 +67,7 @@ export default function FootballCardGame() {
 
   useEffect(() => {
     loadCategoriesFromDB();
-    if (isLoggedIn && username) {
-      checkRoomAndSessionState();
-    }
   }, [isLoggedIn]);
-
-  const checkRoomAndSessionState = async () => {
-    const { data: roomData } = await supabase.from('rooms').select('*').eq('id', SINGLE_ROOM_ID).single();
-
-    if (!roomData) {
-      setGameState('mainMenu');
-    } else {
-      await joinRoomProcess(username);
-      syncGameState(roomData);
-    }
-  };
 
   const syncGameState = (roomData) => {
     if (!roomData) {
@@ -160,7 +146,7 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // Polling กลางสำหรับซิงค์สถานะห้อง และตรวจสอบว่า Admin ยังอยู่ในห้องจริงหรือไม่
+  // Polling กลางสำหรับซิงค์สถานะห้อง
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -179,7 +165,7 @@ export default function FootballCardGame() {
         return;
       }
 
-      // เช็คว่า Admin (Host) ยังอยู่ในตาราง room_players หรือไม่ ถ้าไม่อยู่ให้ลบห้องทิ้งทันที
+      // ตรวจสอบว่า Admin ยังอยู่ในห้องจริงไหม (ถ้า Admin ออก ให้ลบห้องทิ้ง)
       const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
       if (activePlayers) {
         const adminStillInRoom = activePlayers.some(p => p.username.toLowerCase() === roomData.host?.toLowerCase());
@@ -203,7 +189,6 @@ export default function FootballCardGame() {
     return () => clearInterval(roomInterval);
   }, [isLoggedIn, gameState]);
 
-  // ฟังก์ชันออกจากระบบหรือออกจากห้อง (ถ้า Admin ออก ลบห้องทิ้งทันที)
   const handleLogoutClean = async () => {
     if (username) {
       if (userRole === 'admin') {
@@ -222,7 +207,6 @@ export default function FootballCardGame() {
     setGameState('mainMenu');
   };
 
-  // ออกจากห้องเฉพาะกิจ (กลับไปหน้าหลัก แต่ถ้าเป็น Admin ให้ลบห้องทิ้งด้วย)
   const handleLeaveRoom = async () => {
     if (username) {
       if (userRole === 'admin') {
@@ -418,7 +402,7 @@ export default function FootballCardGame() {
     setUsername(cleanUsername);
     setUserRole(assignedRole);
     setIsLoggedIn(true);
-    setGameState('mainMenu');
+    setGameState('mainMenu'); // เข้าหน้าหลักก่อนเสมอ
   };
 
   const handleImageUpload = async (categoryKey, itemIndex, e) => {
@@ -1087,7 +1071,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Admin Room Monitoring Active.
+        © 2026 L88PER. Main Menu & Manual Room Creation Active.
       </footer>
 
     </div>
