@@ -6,11 +6,9 @@ export default function FootballCardGame() {
   const [username, setUsername] = useState('');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   
-  const [view, setView] = useState('roomList'); // roomList, roomLobby, customize, game
-  const [rooms, setRooms] = useState([]);
-  const [currentRoom, setCurrentRoom] = useState(null);
+  const [view, setView] = useState('lobby'); // lobby, game, customize
   const [roomPlayers, setRoomPlayers] = useState([]);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const SINGLE_ROOM_ID = 1; // ล็อกไอดีห้องกลางไว้ 1 ห้องถาวร
 
   // Categories and cards data
   const [categories, setCategories] = useState({
@@ -19,28 +17,10 @@ export default function FootballCardGame() {
     nationality: []
   });
 
-  // 1. Load categories from Supabase
+  // Load categories from Supabase
   useEffect(() => {
     loadCategoriesFromDB();
   }, []);
-
-  // Clean up room and player session if window unloads
-  useEffect(() => {
-    const handleBeforeUnload = async () => {
-      if (currentRoom) {
-        if (currentRoom.host === username) {
-          await supabase.from('rooms').delete().eq('id', currentRoom.id);
-          await supabase.from('room_players').delete().eq('room_id', currentRoom.id);
-        } else {
-          await supabase.from('room_players').delete().eq('room_id', currentRoom.id).eq('username', username);
-        }
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [currentRoom, username]);
 
   const loadCategoriesFromDB = async () => {
     const { data } = await supabase.from('category_items').select(`id, item_value, image_url, categories (key_name)`);
@@ -56,107 +36,54 @@ export default function FootballCardGame() {
     }
   };
 
-  // Temporary Login handler
-  const handleLogin = (e) => {
+  // Login handler & Join fixed room automatically
+  const handleLogin = async (e) => {
     e.preventDefault();
     if (!username.trim()) return;
     if (username.trim().length > 8) {
       alert('Username must not exceed 8 characters.');
       return;
     }
-    setIsLoggedIn(true);
-    fetchRooms();
-  };
 
-  // Fetch rooms list and clean up ghost/inactive rooms where host is missing
-  const fetchRooms = async () => {
-    const { data: roomsData } = await supabase.from('rooms').select('*').eq('status', 'waiting');
-    const { data: playersData } = await supabase.from('room_players').select('*');
-
-    if (roomsData) {
-      const validRooms = [];
-      for (const room of roomsData) {
-        const hostExists = playersData?.some(p => p.room_id === room.id && p.username === room.host);
-        if (!hostExists) {
-          // Host is missing: Delete room and its inactive players completely
-          await supabase.from('rooms').delete().eq('id', room.id);
-          await supabase.from('room_players').delete().eq('room_id', room.id);
-        } else {
-          validRooms.push(room);
-        }
-      }
-      setRooms(validRooms);
-    }
-  };
-
-  const handleRefreshRooms = async () => {
-    setIsRefreshing(true);
-    await fetchRooms();
-    setTimeout(() => setIsRefreshing(false), 500);
-  };
-
-  // Create a new room
-  const createRoom = async () => {
-    // Clean up any stale sessions for this username first
-    await supabase.from('room_players').delete().eq('username', username);
-
-    const roomName = `${username}'s Room`;
-    const { data, error } = await supabase
-      .from('rooms')
-      .insert([{ name: roomName, host: username, status: 'waiting' }])
-      .select()
-      .single();
-
-    if (error) {
-      alert('Failed to create room.');
-      return;
-    }
-
-    const newRoom = data;
-    await supabase.from('room_players').insert([{ room_id: newRoom.id, username: username, score: 0, hand: [] }]);
-
-    setCurrentRoom(newRoom);
-    setView('roomLobby');
-    subscribeRoom(newRoom.id);
-  };
-
-  // Join an existing room with duplicate username check
-  const joinRoom = async (room) => {
-    const { data: existingPlayers } = await supabase.from('room_players').select('*').eq('room_id', room.id);
+    // Check duplicate username in active room
+    const { data: existingPlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
     
     if (existingPlayers && existingPlayers.length >= 4) {
-      alert('This room is full (maximum 4 players).');
+      alert('The room is full (maximum 4 players).');
       return;
     }
 
-    // Check duplicate username in target room
     if (existingPlayers && existingPlayers.some(p => p.username.toLowerCase() === username.toLowerCase())) {
-      alert('This username is already taken in this room. Please choose another name.');
+      alert('This username is already taken in the room.');
       return;
     }
 
-    await supabase.from('room_players').insert([{ room_id: room.id, username: username, score: 0, hand: [] }]);
-    setCurrentRoom(room);
-    setView('roomLobby');
-    subscribeRoom(room.id);
+    // Insert user into fixed room
+    const { error } = await supabase.from('room_players').insert([{ 
+      room_id: SINGLE_ROOM_ID, 
+      username: username.trim(), 
+      score: 0, 
+      hand: [] 
+    }]);
+
+    if (error) {
+      alert('Failed to join the room.');
+      return;
+    }
+
+    setIsLoggedIn(true);
+    setView('lobby');
+    subscribeRoom(SINGLE_ROOM_ID);
   };
 
-  // Realtime Subscribe for room and players
+  // Realtime Subscribe for the fixed room
   const subscribeRoom = (roomId) => {
-    const channel = supabase.channel(`room-${roomId}`)
+    const channel = supabase.channel(`room-fixed-${roomId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` }, () => {
         fetchRoomPlayers(roomId);
       })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, () => {
-        alert('Host left the room. The room has been closed.');
-        setCurrentRoom(null);
-        setRoomPlayers([]);
-        setView('roomList');
-        fetchRooms();
-      })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, (payload) => {
         if (payload.new.status === 'playing') {
-          setCurrentRoom(payload.new);
           setView('game');
         }
       })
@@ -170,32 +97,27 @@ export default function FootballCardGame() {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) {
       setRoomPlayers(playersData);
-      // Auto-kick / close room if host is missing from active players list
-      if (currentRoom && !playersData.some(p => p.username === currentRoom.host)) {
-        alert('Host has left the room.');
-        leaveRoom();
-      }
     }
   };
 
-  // Leave room handler
+  // Leave room handler (cleanup user session)
   const leaveRoom = async () => {
-    if (currentRoom) {
-      if (currentRoom.host === username) {
-        await supabase.from('rooms').delete().eq('id', currentRoom.id);
-        await supabase.from('room_players').delete().eq('room_id', currentRoom.id);
-      } else {
-        await supabase.from('room_players').delete().eq('room_id', currentRoom.id).eq('username', username);
-      }
-    }
-    setCurrentRoom(null);
+    await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
+    setIsLoggedIn(false);
+    setUsername('');
     setRoomPlayers([]);
-    setView('roomList');
-    fetchRooms();
   };
 
-  // Host starts the game
-  const startGameHost = async () => {
+  // First player in the room is the host who can start the game
+  const isHost = roomPlayers.length > 0 && roomPlayers[0].username === username;
+
+  // Start game handler (Host only, min 2 players, max 4 players)
+  const startGame = async () => {
+    if (roomPlayers.length < 2) {
+      alert('Need at least 2 players to start the game.');
+      return;
+    }
+
     const keys = Object.keys(categories);
     const updatedPlayers = roomPlayers.map(p => {
       const hand = [];
@@ -219,21 +141,25 @@ export default function FootballCardGame() {
       nationality: natList[Math.floor(Math.random() * natList.length)]
     };
 
-    await supabase.from('rooms').update({ 
+    // Update fixed room status to playing
+    await supabase.from('rooms').upsert({ 
+      id: SINGLE_ROOM_ID,
+      name: 'Main Lobby',
+      host: roomPlayers[0].username,
       status: 'playing', 
       players_data: updatedPlayers,
       table_cards: initialTable,
       current_turn: 0
-    }).eq('id', currentRoom.id);
+    });
   };
 
-  // Temporary Login Screen
+  // Login Screen
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-6 font-sans">
         <form onSubmit={handleLogin} className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-sm w-full text-center">
           <h1 className="text-2xl font-bold mb-4 text-emerald-400">⚽ Football Trivia Game</h1>
-          <p className="text-xs text-slate-400 mb-6">Enter your username (Max 8 characters. Data clears after session ends)</p>
+          <p className="text-xs text-slate-400 mb-6">Enter your username (Max 8 characters)</p>
           <input 
             type="text" 
             maxLength={8}
@@ -243,7 +169,7 @@ export default function FootballCardGame() {
             className="w-full p-3 rounded-lg bg-slate-700 border border-slate-600 text-center text-white mb-4 focus:outline-none focus:border-emerald-400 font-bold"
           />
           <button type="submit" className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer">
-            Enter Lobby
+            Join Room
           </button>
         </form>
       </div>
@@ -254,62 +180,18 @@ export default function FootballCardGame() {
     <div className="min-h-screen bg-slate-900 text-white p-6 flex flex-col justify-between font-sans">
       <div className="flex-1 flex flex-col items-center justify-center">
         
-        {/* Room List View */}
-        {view === 'roomList' && (
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full">
-            <div className="flex justify-between items-center mb-6">
-              <h1 className="text-xl font-bold text-emerald-400">👤 Player: {username}</h1>
-              <button onClick={() => setView('customize')} className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg border border-slate-600">
-                ⚙️ Customize
-              </button>
-            </div>
-
-            <div className="flex gap-3 mb-6">
-              <button onClick={createRoom} className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow cursor-pointer text-sm">
-                + Create Room
-              </button>
-              <button 
-                onClick={handleRefreshRooms} 
-                disabled={isRefreshing}
-                className="px-4 py-3 bg-slate-700 hover:bg-slate-600 font-bold rounded-xl transition cursor-pointer text-sm disabled:opacity-50"
-              >
-                {isRefreshing ? '🔄 Loading...' : '🔄 Refresh'}
-              </button>
-            </div>
-
-            <h3 className="text-slate-400 text-sm mb-3">Available Rooms:</h3>
-            <div className="space-y-3 max-h-60 overflow-y-auto">
-              {rooms.length === 0 ? (
-                <p className="text-center text-slate-500 text-xs py-4">No rooms available. Create one!</p>
-              ) : (
-                rooms.map(room => (
-                  <div key={room.id} className="flex justify-between items-center bg-slate-700/60 p-3 rounded-xl border border-slate-600">
-                    <div>
-                      <div className="font-bold text-sm">{room.name}</div>
-                      <div className="text-[10px] text-slate-400">Host: {room.host}</div>
-                    </div>
-                    <button onClick={() => joinRoom(room)} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-xs font-bold rounded-lg cursor-pointer">
-                      Join
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Room Lobby View */}
-        {view === 'roomLobby' && currentRoom && (
+        {/* Lobby View */}
+        {view === 'lobby' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
-            <h2 className="text-2xl font-bold mb-2 text-emerald-400">{currentRoom.name}</h2>
-            <p className="text-xs text-slate-400 mb-6">Waiting for players (Max 4 players)</p>
+            <h2 className="text-2xl font-bold mb-2 text-emerald-400">Main Game Lobby</h2>
+            <p className="text-xs text-slate-400 mb-6">Waiting for players to join (2-4 players)</p>
 
             <div className="bg-slate-700/50 p-4 rounded-xl mb-6 text-left border border-slate-600">
               <h4 className="text-xs font-bold text-slate-300 mb-2 uppercase">Players in room ({roomPlayers.length}/4):</h4>
               <div className="space-y-2">
                 {roomPlayers.map((p, idx) => (
                   <div key={idx} className="flex justify-between items-center bg-slate-700 p-2 rounded-lg text-sm">
-                    <span>👑 {p.username} {p.username === currentRoom.host ? '(Host)' : ''}</span>
+                    <span>{idx === 0 ? '👑' : '👤'} {p.username} {idx === 0 ? '(Host)' : ''}</span>
                   </div>
                 ))}
               </div>
@@ -318,27 +200,31 @@ export default function FootballCardGame() {
             <div className="flex gap-3">
               <button onClick={leaveRoom} className="w-1/2 py-3 bg-red-600/80 hover:bg-red-600 font-bold rounded-xl text-sm transition cursor-pointer">
                 Leave Room
-              </>
-              {currentRoom.host === username ? (
-                <button onClick={startGameHost} className="w-1/2 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl text-sm transition cursor-pointer shadow">
+              </button>
+              {isHost ? (
+                <button 
+                  onClick={startGame} 
+                  disabled={roomPlayers.length < 2}
+                  className="w-1/2 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl text-sm transition cursor-pointer shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                >
                   Start Game 🚀
                 </button>
               ) : (
                 <div className="w-1/2 flex items-center justify-center text-xs text-slate-400 italic">
-                  Waiting for host to start...
+                  Waiting for host...
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* Customize View */}
-        {view === 'customize' && (
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-xl w-full text-center">
-            <h2 className="text-xl font-bold mb-4 text-emerald-400">⚙️ Card Data Management</h2>
-            <p className="text-xs text-slate-400 mb-6">Database card information overview</p>
-            <button onClick={() => setView('roomList')} className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-sm font-bold rounded-xl">
-              Back to Main
+        {/* Game View Placeholder */}
+        {view === 'game' && (
+          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+            <h2 className="text-2xl font-bold mb-4 text-emerald-400">🎮 Game Started!</h2>
+            <p className="text-sm text-slate-300 mb-6">Match is in progress...</p>
+            <button onClick={leaveRoom} className="px-6 py-2 bg-red-600 hover:bg-red-500 text-sm font-bold rounded-xl">
+              Exit Game
             </button>
           </div>
         )}
