@@ -58,7 +58,6 @@ export default function FootballCardGame() {
   const [timeLeft, setTimeLeft] = useState(20);
   const [isPaused, setIsPaused] = useState(false);
   const [lastPlayedCard, setLastPlayedCard] = useState(null);
-  const [stealingPlayerId, setStealingPlayerId] = useState(null);
   const [winner, setWinner] = useState(null);
   
   const [newValues, setNewValues] = useState({
@@ -108,7 +107,6 @@ export default function FootballCardGame() {
       if (roomData.winner_data) setWinner(roomData.winner_data);
     }
 
-    // ถ้าอยู่ในหน้าเล่น ให้ใช้ players_data จาก room แต่ถ้าอยู่หน้า lobby ให้ดึงจาก room_players ผ่าน fetchRoomPlayers
     if (roomData.status !== 'waiting' && roomData.players_data) {
       setRoomPlayers(roomData.players_data);
       setInitialPlayerCount(roomData.players_data.length);
@@ -119,7 +117,6 @@ export default function FootballCardGame() {
     if (roomData.turn_phase) setTurnPhase(roomData.turn_phase);
     if (roomData.time_left !== undefined) setTimeLeft(roomData.time_left);
     if (roomData.is_paused !== undefined) setIsPaused(roomData.is_paused);
-    if (roomData.stealing_player_id !== undefined) setStealingPlayerId(roomData.stealing_player_id);
   };
 
   const joinRoomProcess = async (uname) => {
@@ -170,7 +167,6 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // Polling กลางสำหรับซิงค์สถานะห้องแบบเรียลไทม์
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -190,7 +186,6 @@ export default function FootballCardGame() {
 
       syncGameState(roomData);
 
-      // ถ้าอยู่ในหน้า Lobby ให้คอยดึงรายชื่อจากตาราง room_players สดๆ ตลอดเวลา
       if (gameState === 'lobby') {
         fetchRoomPlayers(SINGLE_ROOM_ID);
       }
@@ -256,7 +251,7 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
   };
 
-  // ตัวจัดการเวลาเฉพาะ Admin (Host) เป็นคนรัน Timer กลาง
+  // ตัวจัดการเวลาเฉพาะ Admin (Host) รัน Timer กลาง
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
     if (isPaused) return;
@@ -295,42 +290,14 @@ export default function FootballCardGame() {
             setCurrentTurn(nextTurn);
             setTimeLeft(20);
             setTurnPhase('placing');
-            await supabase.from('rooms').update({ current_turn: nextTurn, time_left: 20, turn_phase: 'placing', stealing_player_id: null }).eq('id', SINGLE_ROOM_ID);
-          } else if (turnPhase === 'stealing' && !stealingPlayerId) {
-            const nextTurn = (currentTurn + 1) % roomPlayers.length;
-            setCurrentTurn(nextTurn);
-            setTimeLeft(20);
-            setTurnPhase('placing');
-            await supabase.from('rooms').update({ current_turn: nextTurn, time_left: 20, turn_phase: 'placing', stealing_player_id: null }).eq('id', SINGLE_ROOM_ID);
-          } else if (turnPhase === 'stealing' && stealingPlayerId) {
-            const pIdx = roomPlayers.findIndex(p => p.username === stealingPlayerId);
-            if (pIdx !== -1) {
-              const stealingPlayer = roomPlayers[pIdx];
-              const newScore = (stealingPlayer.score || 0) - 1;
-              const updatedPlayers = roomPlayers.map((p, idx) => idx === pIdx ? { ...p, score: newScore } : p);
-              setRoomPlayers(updatedPlayers);
-
-              const nextTurn = (currentTurn + 1) % roomPlayers.length;
-              setCurrentTurn(nextTurn);
-              setTimeLeft(20);
-              setTurnPhase('placing');
-              setStealingPlayerId(null);
-
-              await supabase.from('rooms').update({
-                players_data: updatedPlayers,
-                current_turn: nextTurn,
-                time_left: 20,
-                turn_phase: 'placing',
-                stealing_player_id: null
-              }).eq('id', SINGLE_ROOM_ID);
-            }
+            await supabase.from('rooms').update({ current_turn: nextTurn, time_left: 20, turn_phase: 'placing' }).eq('id', SINGLE_ROOM_ID);
           }
         }
       }
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [gameState, turnPhase, currentTurn, roomPlayers, userRole, isPaused, stealingPlayerId]);
+  }, [gameState, turnPhase, currentTurn, roomPlayers, userRole, isPaused]);
 
   const loadCategoriesFromDB = async () => {
     const { data, error } = await supabase
@@ -610,54 +577,13 @@ export default function FootballCardGame() {
     }).eq('id', SINGLE_ROOM_ID);
   };
 
+  // ตอบผิด: หัก -1 คะแนน แล้วเปลี่ยนเทิร์นให้ผู้เล่นถัดไปทันที (ไม่มี Steal)
   const handleOwnerAnswerWrong = async () => {
     if (isPaused || !isMyTurn) return;
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: (p.score || 0) - 1 } : p);
-    setRoomPlayers(updatedPlayers);
-    setTurnPhase('stealing');
-    setTimeLeft(10);
-
-    await supabase.from('rooms').update({
-      players_data: updatedPlayers,
-      turn_phase: 'stealing',
-      time_left: 10,
-      stealing_player_id: null
-    }).eq('id', SINGLE_ROOM_ID);
-  };
-
-  const handleStealClick = async (uname) => {
-    if (isPaused || isMyTurn || stealingPlayerId) return;
-    setStealingPlayerId(uname);
-
-    await supabase.from('rooms').update({
-      stealing_player_id: uname
-    }).eq('id', SINGLE_ROOM_ID);
-  };
-
-  const handleStealResult = async (isCorrect) => {
-    const pIdx = roomPlayers.findIndex(p => p.username === stealingPlayerId);
-    if (pIdx === -1) return;
-    const stealingPlayer = roomPlayers[pIdx];
-    const scoreChange = isCorrect ? 1 : -1;
-    const newScore = (stealingPlayer.score || 0) + scoreChange;
-
-    const updatedPlayers = roomPlayers.map((p, idx) => idx === pIdx ? { ...p, score: newScore } : p);
-
-    if (isCorrect && newScore >= 3 && stealingPlayer.hand?.length === 0) {
-      setWinner(stealingPlayer);
-      setGameState('finished');
-      await supabase.from('rooms').update({
-        status: 'finished',
-        winner_data: stealingPlayer,
-        players_data: updatedPlayers
-      }).eq('id', SINGLE_ROOM_ID);
-      return;
-    }
-
+    
     const nextTurn = (currentTurn + 1) % roomPlayers.length;
-
     setRoomPlayers(updatedPlayers);
-    setStealingPlayerId(null);
     setCurrentTurn(nextTurn);
     setTimeLeft(20);
     setTurnPhase('placing');
@@ -666,8 +592,7 @@ export default function FootballCardGame() {
       players_data: updatedPlayers,
       current_turn: nextTurn,
       time_left: 20,
-      turn_phase: 'placing',
-      stealing_player_id: null
+      turn_phase: 'placing'
     }).eq('id', SINGLE_ROOM_ID);
   };
 
@@ -710,7 +635,6 @@ export default function FootballCardGame() {
     setCurrentTurn(0);
     setWinner(null);
     setIsPaused(false);
-    setStealingPlayerId(null);
     setCountdownTime(10);
     setGameState('countdown');
 
@@ -726,7 +650,6 @@ export default function FootballCardGame() {
       turn_phase: 'placing',
       time_left: 20,
       is_paused: false,
-      stealing_player_id: null,
       winner_data: null
     });
   };
@@ -968,8 +891,6 @@ export default function FootballCardGame() {
               <div className="absolute top-4 right-4 bg-slate-700 px-3 py-1 rounded-full text-yellow-400 font-bold text-sm">
                 {turnPhase === 'answering' ? (
                   <span className="text-emerald-400">🎤 Answer Phase (No Time Limit)</span>
-                ) : turnPhase === 'stealing' ? (
-                  <span className="text-amber-400">⚡ Steal Time: {timeLeft}s</span>
                 ) : (
                   `⏳ Time: ${timeLeft}s (Think & Place)`
                 )}
@@ -1032,40 +953,6 @@ export default function FootballCardGame() {
               {!isMyTurn && turnPhase === 'answering' && (
                 <div className="text-center text-slate-300 text-sm italic">
                   🎤 {roomPlayers[currentTurn]?.username || roomPlayers[currentTurn]?.name} กำลังตอบคำถาม...
-                </div>
-              )}
-
-              {turnPhase === 'stealing' && !stealingPlayerId && !isMyTurn && (
-                <div className="text-center bg-amber-500/20 border border-amber-500/50 p-4 rounded-xl w-full">
-                  <p className="text-amber-300 font-bold mb-1">⚡ เจ้าของเทิร์นตอบผิด! กด Steal แย่งตอบภายใน {timeLeft} วินาที</p>
-                  <p className="text-xs text-amber-200 mb-3">(หากกดแล้วตอบไม่ทันหรือตอบผิด จะโดน -1 คะแนน)</p>
-                  <div className="flex gap-3 justify-center flex-wrap">
-                    <button onClick={() => handleStealClick(username)} className="px-5 py-2 bg-amber-600 hover:bg-amber-500 font-bold rounded-lg text-sm cursor-pointer shadow">
-                      🔥 กด Steal แย่งตอบ!
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {stealingPlayerId && (
-                <div className="text-center bg-slate-700 p-4 rounded-xl w-full border border-yellow-500/50">
-                  <p className="text-yellow-300 font-bold mb-1">⚡ ผู้เล่น <span className="text-white underline">{stealingPlayerId}</span> กำลังแย่งตอบ (Steal)!</p>
-                  <p className="text-xs text-slate-300 mb-3">เวลาที่เหลือ: {timeLeft}s (ถ้าหมดเวลา Admin ยังไม่กดจะถือว่าตอบไม่ทันและโดน -1)</p>
-                  
-                  {userRole === 'admin' ? (
-                    <div className="flex gap-3 justify-center">
-                      <button onClick={() => handleStealResult(true)} className="px-4 py-2 bg-green-600 hover:bg-green-500 font-bold rounded-lg text-sm cursor-pointer">
-                        ✅ Steal ถูก (+1 คะแนน)
-                      </button>
-                      <button onClick={() => handleStealResult(false)} className="px-4 py-2 bg-red-600 hover:bg-red-500 font-bold rounded-lg text-sm cursor-pointer">
-                        ❌ Steal ผิด (-1 คะแนน)
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="text-xs text-amber-300 font-medium italic animate-pulse">
-                      ⏳ รอ Admin ตัดสินผลของ {stealingPlayerId}...
-                    </div>
-                  )}
                 </div>
               )}
             </div>
@@ -1191,7 +1078,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Lobby Player List Sync Fixed.
+        © 2026 L88PER. No-Steal Version Active.
       </footer>
 
     </div>
