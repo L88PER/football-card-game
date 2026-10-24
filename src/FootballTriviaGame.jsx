@@ -96,7 +96,8 @@ export default function FootballCardGame() {
   };
 
   const syncGameState = (roomData) => {
-    if (roomData.status === 'waiting') {
+    // ถ้าฝั่งผู้เล่นกำลังนับถอยหลังหรือเล่นอยู่แล้ว ไม่ให้สถานะ Lobby ไปทับ
+    if (roomData.status === 'waiting' && gameState !== 'countdown' && gameState !== 'playing') {
       setGameState('lobby');
     } else if (roomData.status === 'countdown') {
       setGameState('countdown');
@@ -107,7 +108,8 @@ export default function FootballCardGame() {
       setGameState('finished');
       if (roomData.winner_data) setWinner(roomData.winner_data);
     }
-    if (roomData.players_data && roomData.status !== 'waiting') {
+
+    if (roomData.players_data) {
       setRoomPlayers(roomData.players_data);
       setInitialPlayerCount(roomData.players_data.length);
     }
@@ -142,7 +144,7 @@ export default function FootballCardGame() {
 
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
-    if (playersData) {
+    if (playersData && gameState === 'lobby') {
       setRoomPlayers(playersData);
     }
   };
@@ -167,6 +169,7 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
+  // Polling กลางสำหรับซิงค์สถานะห้องแบบเรียลไทม์
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -247,6 +250,7 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
   };
 
+  // ตัวจัดการเวลาเฉพาะ Admin (Host) เป็นคนรัน Timer กลาง
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
     if (isPaused) return;
@@ -1181,7 +1185,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Admin Lobby View Fixed.
+        © 2026 L88PER. Countdown State Sync Fix Active.
       </footer>
 
     </div>
