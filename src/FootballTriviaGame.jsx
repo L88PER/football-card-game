@@ -84,8 +84,7 @@ export default function FootballCardGame() {
       }
     } else {
       if (!roomData) {
-        alert('Admin ยังไม่ได้สร้างห้อง กรุณารอ Admin สร้างห้องก่อน');
-        handleLogoutClean();
+        setGameState('waitingForRoom');
         return;
       }
       await joinRoomProcess(username);
@@ -94,6 +93,11 @@ export default function FootballCardGame() {
   };
 
   const syncGameState = (roomData) => {
+    if (!roomData) {
+      setGameState(userRole === 'admin' ? 'adminCreateRoom' : 'waitingForRoom');
+      return;
+    }
+
     if (roomData.status === 'waiting' && gameState !== 'countdown' && gameState !== 'playing') {
       setGameState('lobby');
     } else if (roomData.status === 'countdown') {
@@ -141,7 +145,7 @@ export default function FootballCardGame() {
 
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
-    if (playersData && gameState === 'lobby') {
+    if (playersData) {
       setRoomPlayers(playersData);
     }
   };
@@ -166,7 +170,7 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // Polling กลางสำหรับซิงค์สถานะห้องทุก 1 วินาที
+  // Polling กลางสำหรับซิงค์สถานะห้องทุก 1 วินาที (หากห้องถูกลบ Player จะเด้งมารอห้องอัตโนมัติ)
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -178,37 +182,41 @@ export default function FootballCardGame() {
         .single();
 
       if (!roomData) {
-        if (userRole !== 'admin') {
-          handleForceResetToLobby('ห้องถูกปิดโดย Admin หรือผู้เล่นไม่ครบ');
+        if (userRole === 'admin') {
+          setGameState('adminCreateRoom');
+        } else {
+          setGameState('waitingForRoom');
+          setRoomPlayers([]);
         }
         return;
       }
 
       syncGameState(roomData);
 
-      if (gameState === 'lobby') {
+      if (gameState === 'lobby' || gameState === 'waitingForRoom') {
+        if (gameState === 'waitingForRoom' && roomData) {
+          await joinRoomProcess(username);
+        }
         fetchRoomPlayers(SINGLE_ROOM_ID);
       }
     }, 1000);
 
     return () => clearInterval(roomInterval);
-  }, [isLoggedIn, gameState, userRole]);
+  }, [isLoggedIn, gameState, userRole, username]);
 
-  const destroyRoomAndReset = async (reason) => {
-    await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
-    await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID);
-    
-    alert(reason);
-    setGameState(userRole === 'admin' ? 'adminCreateRoom' : 'lobby');
-    setInitialPlayerCount(0);
-    setRoomPlayers([]);
-  };
+  const handleLogoutClean = async () => {
+    if (username) {
+      await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
+    }
+    deleteCookie('fc_username');
+    deleteCookie('fc_role');
 
-  const handleForceResetToLobby = (msg) => {
-    alert(msg);
     setIsLoggedIn(false);
     setUsername('');
+    setPassword('');
+    setUserRole('player');
     setRoomPlayers([]);
+    setGameState('adminCreateRoom');
   };
 
   const handleAdminCreateRoom = async () => {
@@ -232,6 +240,20 @@ export default function FootballCardGame() {
     setGameState('lobby');
   };
 
+  // ฟังก์ชันให้ Admin กดจบเกม: ลบห้องและเคลียร์ผู้เล่นทั้งหมดทันที
+  const handleAdminEndGame = async () => {
+    if (userRole !== 'admin') return;
+    if (!window.confirm('คุณต้องการยกเลิกและลบห้องนี้ใช่หรือไม่? ผู้เล่นทั้งหมดจะถูกเตะออกไปหน้าจอรอห้อง')) return;
+
+    await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
+    await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID);
+
+    setGameState('adminCreateRoom');
+    setIsPaused(false);
+    setWinner(null);
+    setRoomPlayers([]);
+  };
+
   const togglePauseGame = async () => {
     if (userRole !== 'admin') return;
     const newPauseState = !isPaused;
@@ -240,7 +262,7 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
   };
 
-  // ตัวจัดการเวลา (เฉพาะ Admin เป็นคนรัน Timer และอัปเดตลง Database เพื่อป้องกันเวลาบัค)
+  // ตัวจัดการเวลา (เฉพาะ Admin รัน Timer)
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
     if (isPaused) return;
@@ -263,14 +285,13 @@ export default function FootballCardGame() {
           }).eq('id', SINGLE_ROOM_ID);
         }
       } else if (gameState === 'playing') {
-        if (turnPhase === 'answering') return; // ช่วงตอบไม่ต้องลดเวลา
+        if (turnPhase === 'answering') return;
 
         if (timeLeft > 1) {
           const nextTime = timeLeft - 1;
           setTimeLeft(nextTime);
           await supabase.from('rooms').update({ time_left: nextTime }).eq('id', SINGLE_ROOM_ID);
         } else {
-          // หมดเวลาวางการ์ด (20s) -> ข้ามเทิร์นไปคนถัดไปอัตโนมัติ
           const nextTurn = (currentTurn + 1) % roomPlayers.length;
           setCurrentTurn(nextTurn);
           setTimeLeft(20);
@@ -366,19 +387,6 @@ export default function FootballCardGame() {
 
     const assignedRole = userData.role || 'player';
 
-    if (assignedRole === 'player') {
-      const { data: roomData } = await supabase.from('rooms').select('*').eq('id', SINGLE_ROOM_ID).single();
-      if (!roomData) {
-        alert('Admin ยังไม่ได้สร้างห้อง กรุณารอ Admin สร้างห้องก่อน');
-        return;
-      }
-      const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
-      if (activePlayers && activePlayers.length >= 4) {
-        alert('The room is full (maximum 4 players).');
-        return;
-      }
-    }
-
     setCookie('fc_username', cleanUsername);
     setCookie('fc_role', assignedRole);
 
@@ -395,25 +403,14 @@ export default function FootballCardGame() {
         syncGameState(roomData);
       }
     } else {
-      await joinRoomProcess(cleanUsername);
       const { data: roomData } = await supabase.from('rooms').select('*').eq('id', SINGLE_ROOM_ID).single();
-      if (roomData) syncGameState(roomData);
+      if (!roomData) {
+        setGameState('waitingForRoom');
+      } else {
+        await joinRoomProcess(cleanUsername);
+        syncGameState(roomData);
+      }
     }
-  };
-
-  const handleLogoutClean = async () => {
-    if (username) {
-      await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
-    }
-    deleteCookie('fc_username');
-    deleteCookie('fc_role');
-
-    setIsLoggedIn(false);
-    setUsername('');
-    setPassword('');
-    setUserRole('player');
-    setRoomPlayers([]);
-    setGameState('adminCreateRoom');
   };
 
   const handleImageUpload = async (categoryKey, itemIndex, e) => {
@@ -731,6 +728,27 @@ export default function FootballCardGame() {
 
       <div className="flex-1 flex flex-col items-center justify-center">
         
+        {/* หน้าจอรอ Admin สร้างห้องสำหรับ User ทั่วไป */}
+        {gameState === 'waitingForRoom' && userRole !== 'admin' && (
+          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+            <h1 className="text-2xl font-bold mb-2 text-emerald-400">⚽ Football Trivia Game</h1>
+            <p className="text-xs text-slate-400 mb-6">ยินดีต้อนรับ, {username}</p>
+            
+            <div className="bg-slate-700/50 p-6 rounded-xl mb-6 border border-slate-600">
+              <div className="text-4xl mb-3 animate-pulse">⏳</div>
+              <p className="text-sm font-bold text-yellow-300 mb-1">กำลังรอ Admin สร้างห้อง...</p>
+              <p className="text-xs text-slate-400">ระบบจะพาเข้าห้องอัตโนมัติทันทีเมื่อ Admin เปิดห้อง</p>
+            </div>
+
+            <button 
+              onClick={handleLogoutClean}
+              className="w-full py-3 bg-red-600/80 hover:bg-red-600 text-white font-bold rounded-xl transition cursor-pointer text-sm"
+            >
+              🚪 ออกจากระบบ (Logout)
+            </button>
+          </div>
+        )}
+
         {gameState === 'adminCreateRoom' && userRole === 'admin' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
             <h1 className="text-2xl font-bold mb-2 text-emerald-400">🛡️ Admin Control Panel</h1>
@@ -824,7 +842,7 @@ export default function FootballCardGame() {
           <div className="max-w-4xl w-full flex flex-col gap-6">
             
             {userRole === 'admin' && (
-              <div className="bg-slate-800 p-3 rounded-xl shadow flex justify-between items-center border border-amber-500/50">
+              <div className="bg-slate-800 p-3 rounded-xl shadow flex justify-between items-center border border-amber-500/50 flex-wrap gap-2">
                 <span className="text-xs text-amber-400 font-bold">🛡️ Admin Control Panel</span>
                 <div className="flex gap-2">
                   <button 
@@ -832,15 +850,22 @@ export default function FootballCardGame() {
                     className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition cursor-pointer shadow"
                     title="เริ่มเกมใหม่ทันที"
                   >
-                    🔄 Restart Game
+                    🔄 Restart
                   </button>
                   <button 
                     onClick={togglePauseGame}
-                    className={`px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer shadow ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer shadow ${
                       isPaused ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-amber-600 hover:bg-amber-500 text-white'
                     }`}
                   >
-                    {isPaused ? '▶️ เล่นต่อ' : '⏸️ หยุดเกม'}
+                    {isPaused ? '▶️ เล่นต่อ' : '⏸️ หยุด'}
+                  </button>
+                  <button 
+                    onClick={handleAdminEndGame}
+                    className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold transition cursor-pointer shadow"
+                    title="ยกเลิกและลบห้อง"
+                  >
+                    🛑 ปิดห้อง (End Room)
                   </button>
                 </div>
               </div>
@@ -1053,10 +1078,10 @@ export default function FootballCardGame() {
                 </button>
               )}
               <button 
-                onClick={handleLogoutClean}
+                onClick={handleAdminEndGame}
                 className="w-full py-3 bg-red-600/80 hover:bg-red-600 text-white font-bold rounded-xl transition cursor-pointer"
               >
-                🚪 ออกจากเกม (Leave Room)
+                🛑 ปิดห้องและกลับหน้าหลัก (Close Room)
               </button>
             </div>
           </div>
@@ -1065,7 +1090,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Timer & Hand Sync Fixed.
+        © 2026 L88PER. Room Lifecycle & Player Waiting Room Active.
       </footer>
 
     </div>
