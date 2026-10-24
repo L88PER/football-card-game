@@ -186,6 +186,7 @@ export default function FootballCardGame() {
         if (roomData.current_turn !== undefined) setCurrentTurn(roomData.current_turn);
         if (roomData.turn_phase) setTurnPhase(roomData.turn_phase);
         if (roomData.time_left !== undefined) setTimeLeft(roomData.time_left);
+        if (roomData.stealing_player_id !== undefined) setStealingPlayerId(roomData.stealing_player_id);
       }
 
       if (gameState === 'playing' && initialPlayerCount > 0 && !roomData.is_paused) {
@@ -249,6 +250,7 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({ is_paused: newPauseState }).eq('id', SINGLE_ROOM_ID);
   };
 
+  // ตัวจัดการเวลาฝั่ง Host (รวมถึงช่วง Steal ที่ให้เวลา 10 วิ ถ้าหมดเวลาโดนหัก -1)
   useEffect(() => {
     if (!isLoggedIn || userRole !== 'admin') return;
     if ((gameState !== 'playing' && gameState !== 'countdown') || isPaused) return;
@@ -263,26 +265,57 @@ export default function FootballCardGame() {
           await supabase.from('rooms').update({ status: 'playing', time_left: 20, turn_phase: 'placing' }).eq('id', SINGLE_ROOM_ID);
         }
       } else if (gameState === 'playing') {
-        if (turnPhase === 'answering') return;
+        if (turnPhase === 'answering') return; // ช่วงเจ้าของเทิร์นตอบ ไม่จับเวลา
 
         if (timeLeft > 1) {
           const newTime = timeLeft - 1;
           setTimeLeft(newTime);
           await supabase.from('rooms').update({ time_left: newTime }).eq('id', SINGLE_ROOM_ID);
         } else {
-          if (turnPhase === 'placing' || turnPhase === 'stealing') {
+          // หมดเวลา
+          if (turnPhase === 'placing') {
             const nextTurn = (currentTurn + 1) % roomPlayers.length;
             setCurrentTurn(nextTurn);
             setTimeLeft(20);
             setTurnPhase('placing');
-            await supabase.from('rooms').update({ current_turn: nextTurn, time_left: 20, turn_phase: 'placing' }).eq('id', SINGLE_ROOM_ID);
+            await supabase.from('rooms').update({ current_turn: nextTurn, time_left: 20, turn_phase: 'placing', stealing_player_id: null }).eq('id', SINGLE_ROOM_ID);
+          } else if (turnPhase === 'stealing' && !stealingPlayerId) {
+            // ไม่มีใครกด Steal ทันใน 10 วิ
+            const nextTurn = (currentTurn + 1) % roomPlayers.length;
+            setCurrentTurn(nextTurn);
+            setTimeLeft(20);
+            setTurnPhase('placing');
+            await supabase.from('rooms').update({ current_turn: nextTurn, time_left: 20, turn_phase: 'placing', stealing_player_id: null }).eq('id', SINGLE_ROOM_ID);
+          } else if (turnPhase === 'stealing' && stealingPlayerId) {
+            // มีคนกด Steal แต่หมดเวลา 10 วิพอดีโดย Admin ยังไม่กดตัดสิน -> ถือว่าตอบไม่ทัน โดนหัก -1
+            const pIdx = roomPlayers.findIndex(p => p.username === stealingPlayerId);
+            if (pIdx !== -1) {
+              const stealingPlayer = roomPlayers[pIdx];
+              const newScore = (stealingPlayer.score || 0) - 1;
+              const updatedPlayers = roomPlayers.map((p, idx) => idx === pIdx ? { ...p, score: newScore } : p);
+              setRoomPlayers(updatedPlayers);
+
+              const nextTurn = (currentTurn + 1) % roomPlayers.length;
+              setCurrentTurn(nextTurn);
+              setTimeLeft(20);
+              setTurnPhase('placing');
+              setStealingPlayerId(null);
+
+              await supabase.from('rooms').update({
+                players_data: updatedPlayers,
+                current_turn: nextTurn,
+                time_left: 20,
+                turn_phase: 'placing',
+                stealing_player_id: null
+              }).eq('id', SINGLE_ROOM_ID);
+            }
           }
         }
       }
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [gameState, countdownTime, timeLeft, turnPhase, currentTurn, roomPlayers, userRole, isPaused]);
+  }, [gameState, countdownTime, timeLeft, turnPhase, currentTurn, roomPlayers, userRole, isPaused, stealingPlayerId]);
 
   const loadCategoriesFromDB = async () => {
     const { data, error } = await supabase
@@ -555,22 +588,29 @@ export default function FootballCardGame() {
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: (p.score || 0) - 1 } : p);
     setRoomPlayers(updatedPlayers);
     setTurnPhase('stealing');
-    setTimeLeft(10);
+    setTimeLeft(10); // ให้เวลา Steal 10 วินาที
 
     await supabase.from('rooms').update({
       players_data: updatedPlayers,
       turn_phase: 'stealing',
-      time_left: 10
+      time_left: 10,
+      stealing_player_id: null
     }).eq('id', SINGLE_ROOM_ID);
   };
 
-  const handleStealClick = async (playerId) => {
-    if (isPaused || isMyTurn) return;
-    setStealingPlayerId(playerId);
+  // ผู้เล่นกดปุ่ม Steal เพื่อแย่งตอบ
+  const handleStealClick = async (uname) => {
+    if (isPaused || isMyTurn || stealingPlayerId) return;
+    setStealingPlayerId(uname);
+
+    await supabase.from('rooms').update({
+      stealing_player_id: uname
+    }).eq('id', SINGLE_ROOM_ID);
   };
 
+  // Admin ตัดสินผลการ Steal (ถูก (+1) / ผิด (-1))
   const handleStealResult = async (isCorrect) => {
-    const pIdx = roomPlayers.findIndex(p => p.id === stealingPlayerId || p.username === stealingPlayerId);
+    const pIdx = roomPlayers.findIndex(p => p.username === stealingPlayerId);
     if (pIdx === -1) return;
     const stealingPlayer = roomPlayers[pIdx];
     const scoreChange = isCorrect ? 1 : -1;
@@ -589,7 +629,8 @@ export default function FootballCardGame() {
       players_data: updatedPlayers,
       current_turn: nextTurn,
       time_left: 20,
-      turn_phase: 'placing'
+      turn_phase: 'placing',
+      stealing_player_id: null
     }).eq('id', SINGLE_ROOM_ID);
   };
 
@@ -632,6 +673,7 @@ export default function FootballCardGame() {
     setCurrentTurn(0);
     setWinner(null);
     setIsPaused(false);
+    setStealingPlayerId(null);
 
     await supabase.from('rooms').upsert({ 
       id: SINGLE_ROOM_ID,
@@ -644,7 +686,8 @@ export default function FootballCardGame() {
       current_turn: 0,
       turn_phase: 'placing',
       time_left: 20,
-      is_paused: false
+      is_paused: false,
+      stealing_player_id: null
     });
 
     setGameState('countdown');
@@ -720,7 +763,6 @@ export default function FootballCardGame() {
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6 flex flex-col justify-between font-sans">
       
-      {/* หน้าต่าง Overlay แจ้งเตือนเมื่อเกมถูก Pause (พร้อมปุ่มกดเล่นต่อสำหรับ Admin ลอยอยู่ด้านบนสุด) */}
       {gameState === 'playing' && isPaused && (
         <div className="fixed inset-0 bg-slate-900/85 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-6 text-center">
           <div className="text-5xl mb-3 animate-bounce">⏸️</div>
@@ -834,7 +876,6 @@ export default function FootballCardGame() {
         {gameState === 'playing' && (
           <div className="max-w-4xl w-full flex flex-col gap-6">
             
-            {/* แถบควบคุมพิเศษสำหรับ Admin (ปุ่ม Pause / Resume ด้านบนสุดของหน้าจอเล่นเกม) */}
             {userRole === 'admin' && (
               <div className="bg-slate-800 p-3 rounded-xl shadow flex justify-between items-center border border-amber-500/50">
                 <span className="text-xs text-amber-400 font-bold">🛡️ Admin Control Panel</span>
@@ -872,8 +913,10 @@ export default function FootballCardGame() {
               <div className="absolute top-4 right-4 bg-slate-700 px-3 py-1 rounded-full text-yellow-400 font-bold text-sm">
                 {turnPhase === 'answering' ? (
                   <span className="text-emerald-400">🎤 Answer Phase (No Time Limit)</span>
+                ) : turnPhase === 'stealing' ? (
+                  <span className="text-amber-400">⚡ Steal Time: {timeLeft}s</span>
                 ) : (
-                  `⏳ Time: ${timeLeft}s (${turnPhase === 'placing' ? 'Think & Place' : 'Steal Phase'})`
+                  `⏳ Time: ${timeLeft}s (Think & Place)`
                 )}
               </div>
 
@@ -937,31 +980,38 @@ export default function FootballCardGame() {
                 </div>
               )}
 
+              {/* ช่วง Steal Phase */}
               {turnPhase === 'stealing' && !stealingPlayerId && !isMyTurn && (
                 <div className="text-center bg-amber-500/20 border border-amber-500/50 p-4 rounded-xl w-full">
-                  <p className="text-amber-300 font-bold mb-2">⚡ เจ้าของเทิร์นตอบผิด! กด Steal เพื่อแย่งตอบได้</p>
+                  <p className="text-amber-300 font-bold mb-1">⚡ เจ้าของเทิร์นตอบผิด! กด Steal แย่งตอบภายใน {timeLeft} วินาที</p>
+                  <p className="text-xs text-amber-200 mb-3">(หากกดแล้วตอบไม่ทันหรือตอบผิด จะโดน -1 คะแนน)</p>
                   <div className="flex gap-3 justify-center flex-wrap">
-                    <button onClick={() => handleStealClick(username)} className="px-4 py-2 bg-amber-600 hover:bg-amber-500 font-bold rounded-lg text-sm cursor-pointer">
-                      🔥 กด Steal!
+                    <button onClick={() => handleStealClick(username)} className="px-5 py-2 bg-amber-600 hover:bg-amber-500 font-bold rounded-lg text-sm cursor-pointer shadow">
+                      🔥 กด Steal แย่งตอบ!
                     </button>
                   </div>
                 </div>
               )}
 
+              {/* เมื่อมีคนกด Steal แล้ว รอ Admin ตัดสินผล */}
               {stealingPlayerId && (
-                <div className="text-center bg-slate-700 p-4 rounded-xl w-full">
-                  <p className="text-yellow-300 font-bold mb-2">⚡ {stealingPlayerId} กำลังแย่งตอบ (Steal)!</p>
+                <div className="text-center bg-slate-700 p-4 rounded-xl w-full border border-yellow-500/50">
+                  <p className="text-yellow-300 font-bold mb-1">⚡ ผู้เล่น <span className="text-white underline">{stealingPlayerId}</span> กำลังแย่งตอบ (Steal)!</p>
+                  <p className="text-xs text-slate-300 mb-3">เวลาที่เหลือ: {timeLeft}s (ถ้าหมดเวลา Admin ยังไม่กดจะถือว่าตอบไม่ทันและโดน -1)</p>
+                  
                   {userRole === 'admin' ? (
                     <div className="flex gap-3 justify-center">
                       <button onClick={() => handleStealResult(true)} className="px-4 py-2 bg-green-600 hover:bg-green-500 font-bold rounded-lg text-sm cursor-pointer">
-                        Steal สำเร็จ (+1)
+                        ✅ Steal ถูก (+1 คะแนน)
                       </button>
                       <button onClick={() => handleStealResult(false)} className="px-4 py-2 bg-red-600 hover:bg-red-500 font-bold rounded-lg text-sm cursor-pointer">
-                        Steal ผิด (-1)
+                        ❌ Steal ผิด (-1 คะแนน)
                       </button>
                     </div>
                   ) : (
-                    <div className="text-xs text-slate-300 italic">รอ Admin ตัดสินผลการ Steal...</div>
+                    <div className="text-xs text-amber-300 font-medium italic animate-pulse">
+                      ⏳ รอ Admin ตัดสินผลของ {stealingPlayerId}...
+                    </div>
                   )}
                 </div>
               )}
@@ -1078,7 +1128,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Admin Resume Fixed Active.
+        © 2026 L88PER. Steal 10s Timer & Admin Judgment Active.
       </footer>
 
     </div>
