@@ -3,41 +3,57 @@ import './index.css';
 import { supabase } from './supabaseClient';
 
 export default function FootballCardGame() {
+  // ระบบ Auth & User
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isAdminRegister, setIsAdminRegister] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userRole, setUserRole] = useState('player'); // 'admin' หรือ 'player'
   const [authMode, setAuthMode] = useState('login'); // 'login' หรือ 'register'
-  
-  const [view, setView] = useState('mainMenu'); // mainMenu, lobby, customize, game
-  const [roomPlayers, setRoomPlayers] = useState([]);
-  const SINGLE_ROOM_ID = 1; // ห้องกลางถาวร
 
-  // Categories and cards data
-  const [categoriesList, setCategoriesList] = useState([]); // รายการหมวดหมู่ทั้งหมดจาก DB
+  // ระบบห้องและผู้เล่นในห้อง
+  const [roomPlayers, setRoomPlayers] = useState([]);
+  const SINGLE_ROOM_ID = 1; // ล็อกห้องกลางถาวร
+
   const [categories, setCategories] = useState({
     position: [],
     league: [],
     nationality: []
   });
 
-  // State สำหรับให้ Admin เพิ่มหมวดหมู่ใหม่ และ เพิ่มไอเทมการ์ดพร้อมอัปโหลดรูป
-  const [newCategoryName, setNewCategoryName] = useState('');
-  const [newCategoryKey, setNewCategoryKey] = useState('');
-  
-  const [selectedCategoryId, setSelectedCategoryId] = useState('');
-  const [newItemValue, setNewItemValue] = useState('');
-  const [imageFile, setImageFile] = useState(null);
-  const [uploading, setUploading] = useState(false);
+  const [gameState, setGameState] = useState('lobby'); // lobby, customize, firstRoundGuess, playing, transition, finished
+  const [tableCards, setTableCards] = useState({
+    position: null,
+    league: null,
+    nationality: null
+  });
 
+  const [refreshVotes, setRefreshVotes] = useState([]);
+  const [turnPhase, setTurnPhase] = useState('placing'); 
+  const [timeLeft, setTimeLeft] = useState(20);
+  
+  const [lastPlayedCard, setLastPlayedCard] = useState(null);
+  const [stealingPlayerId, setStealingPlayerId] = useState(null);
+  const [winner, setWinner] = useState(null);
+  const [feedback, setFeedback] = useState('');
+  
+  const [transitionTime, setTransitionTime] = useState(5);
+  const [nextPlayerName, setNextPlayerName] = useState('');
+
+  const [newValues, setNewValues] = useState({
+    position: '',
+    league: '',
+    nationality: ''
+  });
+
+  // โหลดข้อมูลจาก Supabase ทันทีที่เปิดเว็บ
   useEffect(() => {
     loadCategoriesFromDB();
   }, []);
 
-  // Realtime Subscribe สำหรับห้อง Lobby
+  // Realtime Subscribe สำหรับห้อง Lobby และสถานะเกม
   useEffect(() => {
-    if (isLoggedIn && view === 'lobby') {
+    if (isLoggedIn && (gameState === 'lobby' || gameState === 'firstRoundGuess' || gameState === 'playing' || gameState === 'transition' || gameState === 'finished')) {
       const channel = supabase.channel(`room-fixed-${SINGLE_ROOM_ID}`)
         .on(
           'postgres_changes', 
@@ -50,8 +66,12 @@ export default function FootballCardGame() {
           'postgres_changes', 
           { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${SINGLE_ROOM_ID}` }, 
           (payload) => {
-            if (payload.new.status === 'playing') {
-              setView('game');
+            const roomData = payload.new;
+            if (roomData.status === 'playing' && roomData.players_data) {
+              // ซิงค์ข้อมูลเกมจาก Host สู่ผู้เล่นทุกคน
+              setRoomPlayers(roomData.players_data);
+              setTableCards(roomData.table_cards || tableCards);
+              setGameState('playing');
             }
           }
         )
@@ -63,26 +83,28 @@ export default function FootballCardGame() {
         supabase.removeChannel(channel);
       };
     }
-  }, [isLoggedIn, view]);
+  }, [isLoggedIn, gameState]);
 
   const loadCategoriesFromDB = async () => {
-    // โหลดตาราง categories หลัก
-    const { data: catData } = await supabase.from('categories').select('*');
-    if (catData) {
-      setCategoriesList(catData);
-      if (catData.length > 0 && !selectedCategoryId) {
-        setSelectedCategoryId(catData[0].id);
-      }
+    const { data, error } = await supabase
+      .from('category_items')
+      .select(`
+        id,
+        item_value,
+        image_url,
+        categories (key_name)
+      `);
+
+    if (error) {
+      console.error('Error fetching categories:', error);
+      return;
     }
 
-    // โหลดไอเทมการ์ดทั้งหมด
-    const { data } = await supabase.from('category_items').select(`id, item_value, image_url, categories (key_name)`);
     if (data && data.length > 0) {
-      const formatted = {};
+      const formatted = { position: [], league: [], nationality: [] };
       data.forEach(item => {
         const key = item.categories?.key_name;
-        if (key) {
-          if (!formatted[key]) formatted[key] = [];
+        if (formatted[key]) {
           formatted[key].push({ id: item.id, value: item.item_value, image: item.image_url || '' });
         }
       });
@@ -129,7 +151,7 @@ export default function FootballCardGame() {
     setIsAdminRegister(false);
   };
 
-  // ฟังก์ชัน Login
+  // ฟังก์ชัน Login เข้าสู่ระบบ
   const handleLogin = async (e) => {
     e.preventDefault();
     const cleanUsername = username.trim();
@@ -141,27 +163,21 @@ export default function FootballCardGame() {
       return;
     }
 
-    setIsLoggedIn(true);
-    setUserRole(userData.role || 'player');
-    setView('mainMenu');
-  };
-
-  // เข้าห้อง Lobby
-  const joinRoom = async () => {
+    // ตรวจสอบว่าห้องเต็มหรือยัง (สูงสุด 4 คน)
     const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
     if (activePlayers && activePlayers.length >= 4) {
       alert('The room is full (maximum 4 players).');
       return;
     }
 
-    if (activePlayers && activePlayers.some(p => p.username.toLowerCase() === username.toLowerCase())) {
-      alert('You are already active in the room.');
+    if (activePlayers && activePlayers.some(p => p.username.toLowerCase() === cleanUsername.toLowerCase())) {
+      alert('This username is already active in the room.');
       return;
     }
 
     const { error: joinError } = await supabase.from('room_players').insert([{ 
       room_id: SINGLE_ROOM_ID, 
-      username: username, 
+      username: cleanUsername, 
       score: 0, 
       hand: [] 
     }]);
@@ -171,121 +187,140 @@ export default function FootballCardGame() {
       return;
     }
 
-    setView('lobby');
+    setIsLoggedIn(true);
+    setUserRole(userData.role || 'player');
+    setGameState('lobby');
   };
 
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) {
       setRoomPlayers(playersData);
-      if (isLoggedIn && view === 'lobby' && !playersData.some(p => p.username === username)) {
-        handleLeaveRoomOnly();
+      if (isLoggedIn && !playersData.some(p => p.username === username)) {
+        handleLogoutClean();
       }
     }
   };
 
-  const handleLeaveRoomOnly = async () => {
-    await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
-    setRoomPlayers([]);
-    setView('mainMenu');
-  };
-
+  // ออกจากห้อง / ล้าง Session
   const handleLogoutClean = async () => {
-    await handleLeaveRoomOnly();
+    if (username) {
+      await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
+    }
     setIsLoggedIn(false);
     setUsername('');
     setPassword('');
     setUserRole('player');
+    setRoomPlayers([]);
+    setGameState('lobby');
   };
 
-  // 1. Admin เพิ่มหมวดหมู่ใหม่
-  const handleAddCategory = async (e) => {
-    e.preventDefault();
-    if (!newCategoryName.trim() || !newCategoryKey.trim()) return;
+  // ฟังก์ชันอัปโหลดรูปภาพลง Supabase Storage และอัปเดต SQL
+  const handleImageUpload = async (categoryKey, itemIndex, e) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
-    const { error } = await supabase.from('categories').insert([{
-      name: newCategoryName.trim(),
-      key_name: newCategoryKey.trim().toLowerCase()
-    }]);
+    const item = categories[categoryKey][itemIndex];
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${categoryKey}-${item.id}-${Date.now()}.${fileExt}`;
 
-    if (error) {
-      alert('Failed to add category (Key might already exist).');
+    const { error: uploadError } = await supabase.storage
+      .from('card-images')
+      .upload(fileName, file);
+
+    if (uploadError) {
+      alert('อัปโหลดรูปไม่สำเร็จ: ' + uploadError.message);
       return;
     }
 
-    alert('Category added successfully!');
-    setNewCategoryName('');
-    setNewCategoryKey('');
-    loadCategoriesFromDB();
-  };
+    const { data: publicURLData } = supabase.storage
+      .from('card-images')
+      .getPublicUrl(fileName);
 
-  // 2. Admin เพิ่มไอเทมการ์ดพร้อมอัปโหลดรูปภาพ
-  const handleAddCardItem = async (e) => {
-    e.preventDefault();
-    if (!newItemValue.trim() || !selectedCategoryId) return;
+    const publicUrl = publicURLData.publicUrl;
 
-    setUploading(true);
-    let imageUrl = '';
+    const { error: updateError } = await supabase
+      .from('category_items')
+      .update({ image_url: publicUrl })
+      .eq('id', item.id);
 
-    try {
-      if (imageFile) {
-        const fileExt = imageFile.name.split('.').pop();
-        const fileName = `${Date.now()}.${fileExt}`;
-        const filePath = `${fileName}`;
-
-        // อัปโหลดไฟล์ไปที่ Supabase Storage (Bucket ชื่อ 'card-images')
-        const { error: uploadError } = await supabase.storage
-          .from('card-images')
-          .upload(filePath, imageFile);
-
-        if (uploadError) {
-          alert('Error uploading image: ' + uploadError.message);
-          setUploading(false);
-          return;
-        }
-
-        // ดึง Public URL ของรูปภาพ
-        const { data: publicURLData } = supabase.storage
-          .from('card-images')
-          .getPublicUrl(filePath);
-
-        imageUrl = publicURLData.publicUrl;
-      }
-
-      // บันทึกลงตาราง category_items
-      const { error: insertError } = await supabase.from('category_items').insert([{
-        category_id: selectedCategoryId,
-        item_value: newItemValue.trim(),
-        image_url: imageUrl
-      }]);
-
-      if (insertError) {
-        alert('Failed to save card item.');
-      } else {
-        alert('Card item added successfully!');
-        setNewItemValue('');
-        setImageFile(null);
-        loadCategoriesFromDB();
-      }
-    } catch (err) {
-      console.error(err);
-      alert('An error occurred during upload.');
-    } finally {
-      setUploading(false);
+    if (updateError) {
+      alert('บันทึกลงฐานข้อมูลไม่สำเร็จ');
+      return;
     }
+
+    const updatedCategories = { ...categories };
+    updatedCategories[categoryKey][itemIndex].image = publicUrl;
+    setCategories(updatedCategories);
   };
 
-  const isHost = roomPlayers.length > 0 && roomPlayers[0].username === username;
+  // ฟังก์ชันเพิ่มข้อมูลใหม่ลง SQL
+  const handleAddItem = async (categoryKey) => {
+    const val = newValues[categoryKey].trim();
+    if (!val) return;
 
-  // Host เริ่มเกม
-  const startGame = async () => {
+    const exists = categories[categoryKey].some(item => item.value.toLowerCase() === val.toLowerCase());
+    if (exists) {
+      alert('มีข้อมูลนี้อยู่ในระบบแล้ว!');
+      return;
+    }
+
+    const { data: catData, error: catError } = await supabase
+      .from('categories')
+      .select('id')
+      .eq('key_name', categoryKey)
+      .single();
+
+    if (catError) {
+      alert('ไม่พบหมวดหมู่ในฐานข้อมูล');
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('category_items')
+      .insert([{ category_id: catData.id, item_value: val, image_url: '' }])
+      .select();
+
+    if (error) {
+      alert('เพิ่มข้อมูลไม่สำเร็จ: ' + error.message);
+      return;
+    }
+
+    const newItem = { id: data[0].id, value: data[0].item_value, image: '' };
+    setCategories({
+      ...categories,
+      [categoryKey]: [...categories[categoryKey], newItem]
+    });
+
+    setNewValues({ ...newValues, [categoryKey]: '' });
+  };
+
+  const randomizeTableCards = () => {
+    const posList = categories.position;
+    const leaList = categories.league;
+    const natList = categories.nationality;
+
+    if (posList.length === 0 || leaList.length === 0 || natList.length === 0) {
+      alert('ข้อมูลในการ์ดไม่เพียงพอ กรุณาตรวจสอบฐานข้อมูล');
+      return;
+    }
+
+    setTableCards({
+      position: posList[Math.floor(Math.random() * posList.length)],
+      league: leaList[Math.floor(Math.random() * leaList.length)],
+      nationality: natList[Math.floor(Math.random() * natList.length)]
+    });
+    setRefreshVotes([]);
+  };
+
+  const startGameHost = async () => {
     if (roomPlayers.length < 2) {
       alert('Need at least 2 players to start the game.');
       return;
     }
 
     const keys = Object.keys(categories);
-    const updatedPlayers = roomPlayers.map(p => {
+    const updatedPlayers = roomPlayers.map((p, idx) => {
       const hand = [];
       for (let j = 0; j < 10; j++) {
         const randomKey = keys[Math.floor(Math.random() * keys.length)];
@@ -295,23 +330,25 @@ export default function FootballCardGame() {
           hand.push({ type: randomKey, value: randomItem.value, image: randomItem.image });
         }
       }
-      return { ...p, hand, score: 0 };
+      return { id: idx + 1, name: p.username, score: 0, hand };
     });
 
-    const firstKey = keys[0] || 'position';
-    const secondKey = keys[1] || 'league';
-    const thirdKey = keys[2] || 'nationality';
-
-    const posList = categories[firstKey] || [];
-    const leaList = categories[secondKey] || [];
-    const natList = categories[thirdKey] || [];
-
+    const posList = categories.position;
+    const leaList = categories.league;
+    const natList = categories.nationality;
     const initialTable = {
-      position: posList.length > 0 ? posList[Math.floor(Math.random() * posList.length)] : null,
-      league: leaList.length > 0 ? leaList[Math.floor(Math.random() * leaList.length)] : null,
-      nationality: natList.length > 0 ? natList[Math.floor(Math.random() * natList.length)] : null
+      position: posList[Math.floor(Math.random() * posList.length)],
+      league: leaList[Math.floor(Math.random() * leaList.length)],
+      nationality: natList[Math.floor(Math.random() * natList.length)]
     };
 
+    setRoomPlayers(updatedPlayers);
+    setTableCards(initialTable);
+    setWinner(null);
+    setFeedback('');
+    setLastPlayedCard(null);
+
+    // บันทึกลงตาราง rooms เพื่อส่งสถานะให้ผู้เล่นคนอื่นซิงค์ตาม
     await supabase.from('rooms').upsert({ 
       id: SINGLE_ROOM_ID,
       name: 'Main Lobby',
@@ -321,7 +358,78 @@ export default function FootballCardGame() {
       table_cards: initialTable,
       current_turn: 0
     });
+
+    setGameState('playing');
   };
+
+  const handleVoteRefresh = (playerId) => {
+    if (refreshVotes.includes(playerId)) return;
+    const newVotes = [...refreshVotes, playerId];
+    setRefreshVotes(newVotes);
+
+    if (newVotes.length >= roomPlayers.length) {
+      randomizeTableCards();
+    }
+  };
+
+  // ควบคุม Timer เฉพาะช่วง placing (20s) และ stealing (10s) เท่านั้น
+  useEffect(() => {
+    if (gameState !== 'playing') return;
+    if (turnPhase === 'answering') return;
+
+    const timer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev > 1) return prev - 1;
+
+        if (turnPhase === 'placing') {
+          triggerTransition('หมดเวลาวางการ์ด (20s)! เทิร์นตกไปผู้เล่นถัดไป');
+          return 0;
+        } else if (turnPhase === 'stealing') {
+          handleNoStealTimeout();
+          return 0;
+        }
+        return 0;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [gameState, turnPhase, roomPlayers, lastPlayedCard]);
+
+  useEffect(() => {
+    if (gameState !== 'transition') return;
+
+    const transTimer = setInterval(() => {
+      setTransitionTime(prev => {
+        if (prev > 1) return prev - 1;
+        
+        // ส่งต่อเทิร์น
+        setStealingPlayerId(null);
+        setFeedback('');
+        setLastPlayedCard(null);
+        setTurnPhase('placing');
+        setTimeLeft(20);
+        setGameState('playing');
+        return 0;
+      });
+    }, 1000);
+
+    return () => clearInterval(transTimer);
+  }, [gameState]);
+
+  // หา index ปัจจุบันของเทิร์น
+  const currentTurnIdx = 0; // ปรับตามความเหมาะสมของลอจิกเทิร์นเดิม
+
+  const triggerTransition = (msg) => {
+    setFeedback(msg);
+    setTransitionTime(5);
+    setGameState('transition');
+  };
+
+  const handleNoStealTimeout = () => {
+    triggerTransition(`ตอบไม่ได้และไม่มีคน Steal (-1 คะแนน)`);
+  };
+
+  const isHost = roomPlayers.length > 0 && roomPlayers[0].username === username;
 
   // 1. หน้าจอ Login / Register
   if (!isLoggedIn) {
@@ -330,7 +438,7 @@ export default function FootballCardGame() {
         <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-sm w-full text-center">
           <h1 className="text-2xl font-bold mb-2 text-emerald-400">⚽ Football Trivia Game</h1>
           <p className="text-xs text-slate-400 mb-6">
-            {authMode === 'login' ? 'Login to your account' : 'Create a new account'}
+            {authMode === 'login' ? 'Login to join the room' : 'Create a new account'}
           </p>
 
           <div className="flex bg-slate-700 p-1 rounded-xl mb-6">
@@ -382,7 +490,7 @@ export default function FootballCardGame() {
             )}
 
             <button type="submit" className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer text-sm shadow">
-              {authMode === 'login' ? 'Login' : 'Sign Up'}
+              {authMode === 'login' ? 'Login & Join Room' : 'Sign Up'}
             </button>
           </form>
         </div>
@@ -392,172 +500,193 @@ export default function FootballCardGame() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6 flex flex-col justify-between font-sans">
+      
       <div className="flex-1 flex flex-col items-center justify-center">
         
-        {/* 2. หน้าหลัก (Main Menu) */}
-        {view === 'mainMenu' && (
+        {/* 2. Lobby (หน้าห้องรอผู้เล่น & ปุ่มไปหน้า Customize สำหรับ Admin) */}
+        {gameState === 'lobby' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
-            <h1 className="text-2xl font-bold mb-1 text-emerald-400">Welcome, {username}!</h1>
-            <p className="text-xs text-slate-400 mb-6">Role: <span className="uppercase font-bold text-yellow-400">{userRole}</span></p>
-
-            <div className="space-y-3">
-              <button 
-                onClick={joinRoom}
-                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow cursor-pointer text-sm"
-              >
-                🎮 Join Game Room
-              </button>
-
-              {userRole === 'admin' && (
-                <button 
-                  onClick={() => setView('customize')}
-                  className="w-full py-3 bg-blue-600 hover:bg-blue-500 font-bold rounded-xl transition shadow cursor-pointer text-sm"
-                >
-                  ⚙️ Customize Categories & Cards (Admin)
-                </button>
-              )}
-
-              <button 
-                onClick={handleLogoutClean}
-                className="w-full py-3 bg-slate-700 hover:bg-slate-600 font-bold rounded-xl transition cursor-pointer text-sm text-red-400"
-              >
-                🚪 Logout
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 3. หน้า Lobby รอผู้เล่น */}
-        {view === 'lobby' && (
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
-            <h2 className="text-2xl font-bold mb-2 text-emerald-400">Main Game Lobby</h2>
-            <p className="text-xs text-slate-400 mb-6">Waiting for players to join (2-4 players)</p>
-
+            <h1 className="text-2xl font-bold mb-2 text-emerald-400">Main Game Lobby</h1>
+            <p className="text-xs text-slate-400 mb-6">Welcome, {username} ({userRole.toUpperCase()}) - Waiting for players (2-4)</p>
+            
             <div className="bg-slate-700/50 p-4 rounded-xl mb-6 text-left border border-slate-600">
               <h4 className="text-xs font-bold text-slate-300 mb-2 uppercase">Players in room ({roomPlayers.length}/4):</h4>
               <div className="space-y-2">
                 {roomPlayers.map((p, idx) => (
                   <div key={idx} className="flex justify-between items-center bg-slate-700 p-2 rounded-lg text-sm">
-                    <span>{idx === 0 ? '👑' : '👤'} {p.username} {idx === 0 ? '(Host)' : ''}</span>
+                    <span>{idx === 0 ? '👑' : '👤'} {p.username || p.name} {idx === 0 ? '(Host)' : ''}</span>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="flex gap-3">
-              <button onClick={handleLeaveRoomOnly} className="w-1/2 py-3 bg-red-600/80 hover:bg-red-600 font-bold rounded-xl text-sm transition cursor-pointer">
-                Back to Menu
-              </button>
-              {isHost ? (
+            <div className="flex flex-col gap-3">
+              {userRole === 'admin' && (
                 <button 
-                  onClick={startGame} 
-                  disabled={roomPlayers.length < 2}
-                  className="w-1/2 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl text-sm transition cursor-pointer shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => setGameState('customize')}
+                  className="w-full py-3 bg-blue-600 hover:bg-blue-500 font-bold rounded-xl transition cursor-pointer text-sm shadow"
                 >
-                  Start Game 🚀
+                  ⚙️ จัดการข้อมูลและรูปภาพการ์ด (Admin)
                 </button>
-              ) : (
-                <div className="w-1/2 flex items-center justify-center text-xs text-slate-400 italic">
-                  Waiting for host...
-                </div>
               )}
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={handleLogoutClean}
+                  className="w-1/2 py-3 bg-red-600/80 hover:bg-red-600 font-bold rounded-xl transition cursor-pointer text-sm"
+                >
+                  Leave Room
+                </button>
+                {isHost ? (
+                  <button 
+                    onClick={startGameHost}
+                    disabled={roomPlayers.length < 2}
+                    className="w-1/2 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow-lg cursor-pointer text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Start Game 🚀
+                  </button>
+                ) : (
+                  <div className="w-1/2 flex items-center justify-center text-xs text-slate-400 italic">
+                    Waiting for host...
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
 
-        {/* 4. หน้า Customize สำหรับ Admin (เพิ่มหมวดหมู่เอง + อัปโหลดรูปภาพการ์ด) */}
-        {view === 'customize' && userRole === 'admin' && (
-          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-bold mb-2 text-emerald-400 text-center">⚙️ Admin Management</h2>
-            <p className="text-xs text-slate-400 mb-6 text-center">Create new categories & upload card items</p>
+        {/* หน้าจอจัดการข้อมูลและอัปโหลดรูปภาพประจำการ์ด (เชื่อม Supabase) */}
+        {gameState === 'customize' && userRole === 'admin' && (
+          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-2xl w-full">
+            <h2 className="text-2xl font-bold mb-2 text-emerald-400 text-center">⚙️ จัดการข้อมูลและรูปภาพการ์ด (SQL)</h2>
+            <p className="text-slate-300 text-xs mb-6 text-center">เพิ่มข้อมูลใหม่และอัปโหลดรูปภาพเก็บลงฐานข้อมูลถาวร</p>
 
-            {/* ส่วนที่ 1: เพิ่มหมวดหมู่ใหม่ */}
-            <form onSubmit={handleAddCategory} className="bg-slate-700/50 p-4 rounded-xl mb-6 border border-slate-600 space-y-3">
-              <h3 className="text-xs font-bold text-emerald-300 uppercase">1. Add New Category</h3>
-              <input 
-                type="text" 
-                placeholder="Category Name (e.g. Club)" 
-                value={newCategoryName}
-                onChange={(e) => setNewCategoryName(e.target.value)}
-                className="w-full p-2.5 rounded-lg bg-slate-700 border border-slate-600 text-white text-xs focus:outline-none"
-                required
-              />
-              <input 
-                type="text" 
-                placeholder="Key Name (e.g. club - lowercase english)" 
-                value={newCategoryKey}
-                onChange={(e) => setNewCategoryKey(e.target.value)}
-                className="w-full p-2.5 rounded-lg bg-slate-700 border border-slate-600 text-white text-xs focus:outline-none"
-                required
-              />
-              <button type="submit" className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold rounded-lg transition">
-                Add Category ➕
-              </button>
-            </form>
+            <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2">
+              {Object.keys(categories).map((catKey) => (
+                <div key={catKey} className="bg-slate-700/50 p-4 rounded-xl border border-slate-600">
+                  <h3 className="text-emerald-300 font-bold uppercase text-sm mb-3">{catKey}</h3>
+                  
+                  <div className="flex gap-2 mb-3">
+                    <input 
+                      type="text" 
+                      placeholder={`เพิ่ม ${catKey} ใหม่...`}
+                      value={newValues[catKey]}
+                      onChange={(e) => setNewValues({ ...newValues, [catKey]: e.target.value })}
+                      className="flex-1 p-2 rounded bg-slate-700 border border-slate-600 text-xs focus:outline-none focus:border-emerald-400"
+                    />
+                    <button 
+                      onClick={() => handleAddItem(catKey)}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold rounded cursor-pointer transition"
+                    >
+                      + เพิ่ม
+                    </button>
+                  </div>
 
-            {/* ส่วนที่ 2: เพิ่มการ์ดและอัปโหลดรูปภาพ */}
-            <form onSubmit={handleAddCardItem} className="bg-slate-700/50 p-4 rounded-xl mb-6 border border-slate-600 space-y-3">
-              <h3 className="text-xs font-bold text-emerald-300 uppercase">2. Add Card Item & Upload Image</h3>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-300 mb-1">Select Category:</label>
-                <select 
-                  value={selectedCategoryId} 
-                  onChange={(e) => setSelectedCategoryId(e.target.value)}
-                  className="w-full p-2.5 rounded-lg bg-slate-700 border border-slate-600 text-white text-xs focus:outline-none"
-                >
-                  {categoriesList.map(cat => (
-                    <option key={cat.id} value={cat.id}>{cat.name} ({cat.key_name})</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-300 mb-1">Item Value / Name:</label>
-                <input 
-                  type="text" 
-                  placeholder="e.g. Real Madrid, Striker" 
-                  value={newItemValue}
-                  onChange={(e) => setNewItemValue(e.target.value)}
-                  className="w-full p-2.5 rounded-lg bg-slate-700 border border-slate-600 text-white text-xs focus:outline-none"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-300 mb-1">Upload Image File:</label>
-                <input 
-                  type="file" 
-                  accept="image/*"
-                  onChange={(e) => setImageFile(e.target.files[0])}
-                  className="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-slate-600 file:text-white hover:file:bg-slate-50 cursor-pointer"
-                />
-              </div>
-
-              <button 
-                type="submit" 
-                disabled={uploading}
-                className="w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-xs font-bold rounded-lg transition disabled:opacity-50"
-              >
-                {uploading ? 'Uploading...' : 'Add Card Item 🚀'}
-              </button>
-            </form>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {categories[catKey].map((item, idx) => (
+                      <div key={item.id || idx} className="bg-slate-700 p-2 rounded-lg flex flex-col items-center gap-2 border border-slate-600">
+                        <div className="w-12 h-12 bg-slate-800 rounded flex items-center justify-center overflow-hidden border border-slate-500">
+                          {item.image ? (
+                            <img src={item.image} alt={item.value} className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-[10px] text-slate-400">No Img</span>
+                          )}
+                        </div>
+                        <span className="text-xs font-semibold text-center truncate w-full">{item.value}</span>
+                        <label className="text-[10px] bg-emerald-600 hover:bg-emerald-500 px-2 py-1 rounded cursor-pointer font-bold transition">
+                          Choose File
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onChange={(e) => handleImageUpload(catKey, idx, e)}
+                          />
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
 
             <button 
-              onClick={() => setView('mainMenu')} 
-              className="w-full py-3 bg-slate-700 hover:bg-slate-600 font-bold rounded-xl text-sm transition cursor-pointer"
+              onClick={() => setGameState('lobby')}
+              className="w-full mt-6 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer shadow-lg text-sm"
             >
-              Back to Menu
+              บันทึกและกลับสู่ล็อบบี้
             </button>
           </div>
         )}
 
-        {/* 5. Game View Placeholder */}
-        {view === 'game' && (
+        {/* หน้าจอ Transition 5s */}
+        {gameState === 'transition' && (
+          <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center animate-fadeIn">
+            <h2 className="text-2xl font-bold mb-3 text-amber-400">⏳ จบเทิร์นนี้</h2>
+            <p className="text-slate-200 text-lg mb-4 font-medium">{feedback}</p>
+
+            <div className="text-slate-400 text-sm">
+              กำลังเริ่มตาถัดไปใน <span className="text-yellow-400 font-bold text-lg">{transitionTime}</span> วินาที...
+            </div>
+          </div>
+        )}
+
+        {/* หน้าจอเล่นเกมปกติ */}
+        {gameState === 'playing' && (
+          <div className="max-w-4xl w-full flex flex-col gap-6">
+            
+            <div className="flex justify-between items-center bg-slate-800 p-4 rounded-xl shadow">
+              <div>
+                <span className="text-slate-400 text-sm">Room Status:</span>
+                <div className="text-xl font-bold text-emerald-400">Active Match</div>
+              </div>
+              <div className="flex gap-4">
+                {roomPlayers.map((p, idx) => (
+                  <div key={idx} className={`text-center px-3 py-1 rounded-lg`}>
+                    <div className="text-xs text-slate-400">{p.username || p.name}</div>
+                    <div className={`text-lg font-bold ${(p.score || 0) < 0 ? 'text-red-400' : 'text-yellow-400'}`}>
+                      {p.score || 0} pts ({p.hand?.length || 0} cards)
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-slate-800 p-6 rounded-xl shadow flex flex-col items-center justify-center relative">
+              <h3 className="text-slate-400 mb-4">Table Conditions (Guess a player matching all 3!)</h3>
+              <div className="flex gap-4 flex-wrap justify-center mb-6">
+                {['position', 'league', 'nationality'].map((type) => {
+                  const card = tableCards[type];
+                  return (
+                    <div key={type} className="bg-emerald-600 p-4 rounded-lg shadow-md text-center min-w-[130px] flex flex-col items-center">
+                      <div className="text-xs text-emerald-200 uppercase">{type}</div>
+                      <div className="w-12 h-12 my-2 bg-emerald-700 rounded-lg overflow-hidden flex items-center justify-center border border-emerald-400/50 shadow-inner">
+                        {card?.image ? (
+                          <img src={card.image} alt={card.value} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-xs text-emerald-200">⚽</span>
+                        )}
+                      </div>
+                      <div className="text-sm font-bold mt-1">{card?.value || '-'}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* หน้าจอจบเกม */}
+        {gameState === 'finished' && (
           <div className="bg-slate-800 p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
-            <h2 className="text-2xl font-bold mb-4 text-emerald-400">🎮 Game Started!</h2>
-            <p className="text-sm text-slate-300 mb-6">Match is in progress...</p>
-            <button onClick={handleLogoutClean} className="px-6 py-2 bg-red-600 hover:bg-red-500 text-sm font-bold rounded-xl">
-              Exit Game
+            <h2 className="text-3xl font-bold mb-2 text-emerald-400">🎉 Winner!</h2>
+            <p className="text-xl text-yellow-400 font-bold mb-6">{winner?.name} wins the game!</p>
+            
+            <button 
+              onClick={() => setGameState('lobby')}
+              className="w-full mt-4 py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition cursor-pointer"
+            >
+              Back to Lobby
             </button>
           </div>
         )}
@@ -565,8 +694,9 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Admin Upload & Custom Categories Active.
+        © 2026 L88PER. All rights reserved.
       </footer>
+
     </div>
   );
 }
