@@ -43,7 +43,7 @@ export default function FootballCardGame() {
     nationality: []
   });
 
-  const [gameState, setGameState] = useState('mainMenu'); // เริ่มต้นที่หน้าหลัก (Main Menu)
+  const [gameState, setGameState] = useState('mainMenu'); 
   const [countdownTime, setCountdownTime] = useState(10);
   const [initialPlayerCount, setInitialPlayerCount] = useState(0);
 
@@ -160,7 +160,7 @@ export default function FootballCardGame() {
     }
   }, [isLoggedIn]);
 
-  // Polling กลางสำหรับซิงค์สถานะห้องทุก 1 วินาที
+  // Polling กลางสำหรับซิงค์สถานะห้อง และตรวจสอบว่า Admin ยังอยู่ในห้องจริงหรือไม่
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -179,6 +179,20 @@ export default function FootballCardGame() {
         return;
       }
 
+      // เช็คว่า Admin (Host) ยังอยู่ในตาราง room_players หรือไม่ ถ้าไม่อยู่ให้ลบห้องทิ้งทันที
+      const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
+      if (activePlayers) {
+        const adminStillInRoom = activePlayers.some(p => p.username.toLowerCase() === roomData.host?.toLowerCase());
+        if (!adminStillInRoom) {
+          await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
+          await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID);
+          setGameState('mainMenu');
+          setRoomPlayers([]);
+          alert('Admin ออกจากห้อง ห้องถูกปิด');
+          return;
+        }
+      }
+
       syncGameState(roomData);
 
       if (gameState === 'lobby') {
@@ -189,8 +203,12 @@ export default function FootballCardGame() {
     return () => clearInterval(roomInterval);
   }, [isLoggedIn, gameState]);
 
+  // ฟังก์ชันออกจากระบบหรือออกจากห้อง (ถ้า Admin ออก ลบห้องทิ้งทันที)
   const handleLogoutClean = async () => {
     if (username) {
+      if (userRole === 'admin') {
+        await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
+      }
       await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
     }
     deleteCookie('fc_username');
@@ -202,6 +220,18 @@ export default function FootballCardGame() {
     setUserRole('player');
     setRoomPlayers([]);
     setGameState('mainMenu');
+  };
+
+  // ออกจากห้องเฉพาะกิจ (กลับไปหน้าหลัก แต่ถ้าเป็น Admin ให้ลบห้องทิ้งด้วย)
+  const handleLeaveRoom = async () => {
+    if (username) {
+      if (userRole === 'admin') {
+        await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
+      }
+      await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
+    }
+    setGameState('mainMenu');
+    setRoomPlayers([]);
   };
 
   const handleAdminCreateRoom = async () => {
@@ -225,7 +255,6 @@ export default function FootballCardGame() {
     setGameState('lobby');
   };
 
-  // ปุ่ม Join Room สำหรับ User ทั่วไป
   const handleJoinRoom = async () => {
     const { data: roomData } = await supabase.from('rooms').select('*').eq('id', SINGLE_ROOM_ID).single();
     if (!roomData) {
@@ -768,7 +797,7 @@ export default function FootballCardGame() {
             <div className="flex flex-col gap-3">
               <div className="flex gap-3">
                 <button 
-                  onClick={() => setGameState('mainMenu')}
+                  onClick={handleLeaveRoom}
                   className="w-1/2 py-3 bg-red-600/80 hover:bg-red-600 font-bold rounded-xl transition cursor-pointer text-sm"
                 >
                   🚪 ออกจากห้อง (Leave)
@@ -858,7 +887,7 @@ export default function FootballCardGame() {
                   ))}
                 </div>
                 <button 
-                  onClick={() => setGameState('mainMenu')}
+                  onClick={handleLeaveRoom}
                   className="px-3 py-2 bg-red-600/80 hover:bg-red-600 text-xs font-bold rounded-lg transition cursor-pointer ml-2"
                   title="กลับหน้าหลัก"
                 >
@@ -1058,7 +1087,7 @@ export default function FootballCardGame() {
       </div>
 
       <footer className="w-full text-center py-4 text-xs text-slate-500 mt-6 border-t border-slate-800">
-        © 2026 L88PER. Main Menu & Admin Settings Active.
+        © 2026 L88PER. Admin Room Monitoring Active.
       </footer>
 
     </div>
