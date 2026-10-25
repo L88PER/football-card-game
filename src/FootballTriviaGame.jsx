@@ -18,6 +18,73 @@ export default function FootballCardGame() {
     document.cookie = `${name}=; Max-Age=0; path=/; SameSite=Lax`;
   };
 
+  // ฟังก์ชันสร้างเสียง Sound Effects ด้วย Web Audio API
+  const playSound = (type) => {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      const ctx = new AudioContext();
+
+      if (type === 'place') {
+        // เสียงตอนลงการ์ด (Pop สั้นๆ)
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(400, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.01, ctx.currentTime + 0.08);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.08);
+      } else if (type === 'tick') {
+        // เสียงใกล้หมดเวลา (Tick ติ๊กสั้นๆ)
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(600, ctx.currentTime);
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.01, ctx.currentTime + 0.04);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.04);
+      } else if (type === 'correct') {
+        // เสียงตอบถูก (โน้ตคู่ขึ้นรัวๆ สดใส)
+        const now = ctx.currentTime;
+        [523.25, 659.25, 783.99].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + i * 0.08);
+          gain.gain.setValueAtTime(0.2, now + i * 0.08);
+          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.08 + 0.2);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + i * 0.08);
+          osc.stop(now + i * 0.08 + 0.2);
+        });
+      } else if (type === 'wrong') {
+        // เสียงตอบผิด (โน้ตต่ำทุ้ม)
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(180, now);
+        osc.frequency.linearRampToValueAtTime(120, now + 0.25);
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.25);
+      }
+    } catch (e) {
+      console.error('Audio play error:', e);
+    }
+  };
+
   const [username, setUsername] = useState(() => getAppCookie('fc_username'));
   const [userRole, setUserRole] = useState(() => getAppCookie('fc_role') || 'player');
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!getAppCookie('fc_username'));
@@ -56,7 +123,7 @@ export default function FootballCardGame() {
   });
 
   const [turnPhase, setTurnPhase] = useState('placing'); 
-  const [timeLeft, setTimeLeft] = useState(30); // เปลี่ยนค่าเริ่มต้นเป็น 30 วินาที
+  const [timeLeft, setTimeLeft] = useState(30); 
   const [isPaused, setIsPaused] = useState(false);
   const [winner, setWinner] = useState(null);
   
@@ -111,7 +178,13 @@ export default function FootballCardGame() {
     if (roomData.table_cards) setTableCards(roomData.table_cards);
     if (roomData.current_turn !== undefined) setCurrentTurn(roomData.current_turn);
     if (roomData.turn_phase) setTurnPhase(roomData.turn_phase);
-    if (roomData.time_left !== undefined) setTimeLeft(roomData.time_left);
+    if (roomData.time_left !== undefined) {
+      // เล่นเสียงติ๊กๆ เมื่อเวลาเหลือ 5 วินาทีสุดท้ายในเทิร์น
+      if (roomData.time_left <= 5 && roomData.time_left > 0 && roomData.turn_phase === 'placing') {
+        playSound('tick');
+      }
+      setTimeLeft(roomData.time_left);
+    }
     if (roomData.is_paused !== undefined) setIsPaused(roomData.is_paused);
   };
 
@@ -331,7 +404,7 @@ export default function FootballCardGame() {
           await supabase.from('rooms').update({ countdown_time: nextCount }).eq('id', SINGLE_ROOM_ID);
         } else {
           setGameState('playing');
-          setTimeLeft(30); // เซ็ตเวลาเริ่มเทิร์นแรกเป็น 30 วินาที
+          setTimeLeft(30);
           setTurnPhase('placing');
           await supabase.from('rooms').update({ 
             status: 'playing', 
@@ -345,10 +418,10 @@ export default function FootballCardGame() {
 
         if (timeLeft > 1) {
           const nextTime = timeLeft - 1;
+          if (nextTime <= 5) playSound('tick');
           setTimeLeft(nextTime);
           await supabase.from('rooms').update({ time_left: nextTime }).eq('id', SINGLE_ROOM_ID);
         } else {
-          // หมดเวลา 30 วิ เปลี่ยนเทิร์นและรีเซ็ตเวลาเป็น 30 วิ
           const nextTurn = (currentTurn + 1) % roomPlayers.length;
           setCurrentTurn(nextTurn);
           setTimeLeft(30);
@@ -545,6 +618,8 @@ export default function FootballCardGame() {
   const handleSelectCard = async (cardIdx) => {
     if (isPaused || !isMyTurn || turnPhase !== 'placing') return;
     
+    playSound('place'); // เล่นเสียงลงการ์ดทันที
+
     const player = roomPlayers[currentTurn];
     const card = player.hand[cardIdx];
     const updatedHand = player.hand.filter((_, idx) => idx !== cardIdx);
@@ -570,7 +645,7 @@ export default function FootballCardGame() {
     if (isPaused || !isMyTurn || turnPhase !== 'placing') return;
     const nextTurn = (currentTurn + 1) % roomPlayers.length;
     setCurrentTurn(nextTurn);
-    setTimeLeft(30); // รีเซ็ตเวลาเป็น 30 วินาทีเมื่อข้ามเทิร์น
+    setTimeLeft(30);
     setTurnPhase('placing');
 
     await supabase.from('rooms').update({
@@ -582,6 +657,8 @@ export default function FootballCardGame() {
 
   const handleAdminAnswerCorrect = async () => {
     if (userRole !== 'admin') return;
+    playSound('correct'); // เล่นเสียงตอบถูก
+
     const player = roomPlayers[currentTurn];
     const newScore = (player.score || 0) + 1;
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: newScore } : p);
@@ -600,7 +677,7 @@ export default function FootballCardGame() {
     const nextTurn = (currentTurn + 1) % roomPlayers.length;
     setRoomPlayers(updatedPlayers);
     setCurrentTurn(nextTurn);
-    setTimeLeft(30); // รีเซ็ตเวลาเป็น 30 วินาที
+    setTimeLeft(30);
     setTurnPhase('placing');
 
     await supabase.from('rooms').update({
@@ -613,12 +690,14 @@ export default function FootballCardGame() {
 
   const handleAdminAnswerWrong = async () => {
     if (userRole !== 'admin') return;
+    playSound('wrong'); // เล่นเสียงตอบผิด
+
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: (p.score || 0) - 1 } : p);
     
     const nextTurn = (currentTurn + 1) % roomPlayers.length;
     setRoomPlayers(updatedPlayers);
     setCurrentTurn(nextTurn);
-    setTimeLeft(30); // รีเซ็ตเวลาเป็น 30 วินาที
+    setTimeLeft(30);
     setTurnPhase('placing');
 
     await supabase.from('rooms').update({
@@ -946,7 +1025,9 @@ export default function FootballCardGame() {
                 {turnPhase === 'answering' ? (
                   <span className="text-emerald-400">🎤 รอ Admin ตัดสิน</span>
                 ) : (
-                  `⏳ ${timeLeft}s`
+                  <span className={timeLeft <= 5 ? 'text-red-400 animate-pulse font-black' : ''}>
+                    ⏳ {timeLeft}s
+                  </span>
                 )}
               </div>
 
