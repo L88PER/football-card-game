@@ -232,10 +232,7 @@ export default function FootballCardGame() {
         }
       }
       prevPlayersLengthRef.current = newLen;
-      // ถ้าอยู่ในหน้า lobby ให้ใช้ room_players แต่ถ้าเกมเริ่มแล้วให้ใช้ข้อมูลจาก rooms (players_data) แทนเพื่อความถูกต้องของไพ่ในมือ
-      if (gameState === 'lobby') {
-        setRoomPlayers(playersData);
-      }
+      setRoomPlayers(playersData);
     }
   };
 
@@ -258,14 +255,16 @@ export default function FootballCardGame() {
       if (roomData.sound_event.startsWith('whistle_')) playSound('whistle');
     }
 
-    // ซิงค์สถานะเกมให้เปลี่ยนตาม Admin ทุกคนในห้องพร้อมกัน
-    if (roomData.status === 'countdown') {
+    // ให้ซิงค์เข้าเกมเฉพาะผู้เล่นที่อยู่ในห้อง (Lobby) แล้วจริงๆ เท่านั้น ห้ามบังคับคนอยู่หน้า Menu
+    const amIInRoom = roomPlayers.some(p => p.username.toLowerCase() === username.toLowerCase());
+
+    if (roomData.status === 'countdown' && (gameState === 'lobby' || amIInRoom)) {
       if (gameState !== 'countdown') {
         playSound('whistle');
       }
       setGameState('countdown');
       if (roomData.countdown_time !== undefined) setCountdownTime(roomData.countdown_time);
-    } else if (roomData.status === 'playing') {
+    } else if (roomData.status === 'playing' && (gameState === 'countdown' || gameState === 'playing' || amIInRoom)) {
       setGameState('playing');
     } else if (roomData.status === 'finished') {
       if (gameState !== 'finished') {
@@ -273,13 +272,13 @@ export default function FootballCardGame() {
       }
       setGameState('finished');
       if (roomData.winner_data) setWinner(roomData.winner_data);
-    } else if (roomData.status === 'waiting') {
-      setGameState('lobby');
     }
 
-    // ซิงค์ข้อมูลผู้เล่น (คะแนน และ การ์ดในมือ hand) จาก players_data ในตาราง rooms
     if (roomData.players_data && roomData.players_data.length > 0) {
-      setRoomPlayers(roomData.players_data);
+      // อัปเดตข้อมูลผู้เล่นเฉพาะตอนที่อยู่ในเกมแล้ว หรือกำลังอยู่ในห้อง
+      if (gameState === 'playing' || gameState === 'countdown' || gameState === 'finished') {
+        setRoomPlayers(roomData.players_data);
+      }
     }
 
     if (roomData.table_cards) setTableCards(roomData.table_cards);
@@ -334,7 +333,7 @@ export default function FootballCardGame() {
 
     const fetchInitialData = async () => {
       const { data: roomData } = await supabase.from('rooms').select('*').eq('id', SINGLE_ROOM_ID).single();
-      if (roomData) syncGameState(roomData);
+      if (roomData && gameState !== 'mainMenu') syncGameState(roomData);
       await fetchRoomPlayers();
     };
     fetchInitialData();
@@ -363,7 +362,7 @@ export default function FootballCardGame() {
       supabase.removeChannel(roomChannel);
       supabase.removeChannel(playersChannel);
     };
-  }, [isLoggedIn]);
+  }, [isLoggedIn, gameState]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
