@@ -252,7 +252,7 @@ export default function FootballCardGame() {
       if (roomData.winner_data) setWinner(roomData.winner_data);
     }
 
-    if (roomData.status !== 'waiting' && roomData.players_data) {
+    if (roomData.players_data) {
       const newLen = roomData.players_data.length;
       if (gameState === 'lobby') {
         if (newLen > prevPlayersLengthRef.current && prevPlayersLengthRef.current > 0) {
@@ -316,21 +316,22 @@ export default function FootballCardGame() {
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) {
-      const newLen = playersData.length;
-      if (gameState === 'lobby') {
-        if (newLen > prevPlayersLengthRef.current && prevPlayersLengthRef.current > 0) {
-          playSound('join');
-        } else if (newLen < prevPlayersLengthRef.current && prevPlayersLengthRef.current > 0) {
-          playSound('leave');
-        }
-      }
-      prevPlayersLengthRef.current = newLen;
       setRoomPlayers(playersData);
     }
   };
 
   useEffect(() => {
     if (!isLoggedIn) return;
+
+    // ดึงค่าข้อมูลห้องและผู้เล่นล่าสุดทันทีเมื่อ component โหลด
+    const fetchInitialRoomState = async () => {
+      const { data: roomData } = await supabase.from('rooms').select('*').eq('id', SINGLE_ROOM_ID).single();
+      if (roomData) {
+        syncGameState(roomData);
+      }
+      await fetchRoomPlayers(SINGLE_ROOM_ID);
+    };
+    fetchInitialRoomState();
 
     const roomChannel = supabase.channel(`room-state-changes-${SINGLE_ROOM_ID}`)
       .on(
@@ -349,9 +350,7 @@ export default function FootballCardGame() {
         'postgres_changes', 
         { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${SINGLE_ROOM_ID}` }, 
         () => {
-          if (gameState === 'lobby') {
-            fetchRoomPlayers(SINGLE_ROOM_ID);
-          }
+          fetchRoomPlayers(SINGLE_ROOM_ID);
         }
       )
       .subscribe();
@@ -360,7 +359,7 @@ export default function FootballCardGame() {
       supabase.removeChannel(roomChannel);
       supabase.removeChannel(playersChannel);
     };
-  }, [isLoggedIn, gameState]);
+  }, [isLoggedIn]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -396,10 +395,6 @@ export default function FootballCardGame() {
       }
 
       syncGameState(roomData);
-
-      if (gameState === 'lobby') {
-        fetchRoomPlayers(SINGLE_ROOM_ID);
-      }
     }, 1000);
 
     return () => clearInterval(roomInterval);
