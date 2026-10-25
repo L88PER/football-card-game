@@ -177,7 +177,6 @@ export default function FootballCardGame() {
 
   const [gameState, setGameState] = useState('mainMenu'); 
   const [countdownTime, setCountdownTime] = useState(0); 
-  const [initialPlayerCount, setInitialPlayerCount] = useState(0);
 
   const [currentTurn, setCurrentTurn] = useState(0); 
   const [tableCards, setTableCards] = useState({
@@ -272,10 +271,9 @@ export default function FootballCardGame() {
       if (roomData.winner_data) setWinner(roomData.winner_data);
     }
 
-    // ซิงค์ข้อมูลผู้เล่น (คะแนนและการ์ดในมือ) จากตาราง rooms โดยตรงเพื่อให้ทุกคนเห็นตรงกัน
-    if (roomData.players_data) {
+    // ซิงค์ข้อมูล hand และ score จากตาราง rooms (players_data) เพื่อให้ผู้เล่นทุกคนมีไพ่ในมือ
+    if (roomData.players_data && roomData.players_data.length > 0) {
       setRoomPlayers(roomData.players_data);
-      setInitialPlayerCount(roomData.players_data.length);
     }
 
     if (roomData.table_cards) setTableCards(roomData.table_cards);
@@ -325,7 +323,6 @@ export default function FootballCardGame() {
     return true;
   };
 
-  // Realtime Subscription สำหรับ rooms และ room_players
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -362,7 +359,6 @@ export default function FootballCardGame() {
     };
   }, [isLoggedIn]);
 
-  // Interval ดึงข้อมูลสถานะห้องและผู้เล่นแบบสม่ำเสมอเพื่อความเสถียร
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -397,8 +393,10 @@ export default function FootballCardGame() {
       }
 
       syncGameState(roomData);
-      await fetchRoomPlayers();
-    }, 1500);
+      if (gameState === 'lobby') {
+        await fetchRoomPlayers();
+      }
+    }, 1000);
 
     return () => clearInterval(syncInterval);
   }, [isLoggedIn, gameState]);
@@ -867,7 +865,6 @@ export default function FootballCardGame() {
     };
 
     setRoomPlayers(updatedPlayers);
-    setInitialPlayerCount(updatedPlayers.length);
     setTableCards(initialTable);
     setCurrentTurn(0);
     setWinner(null);
