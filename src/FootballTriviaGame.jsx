@@ -18,7 +18,7 @@ export default function FootballCardGame() {
     document.cookie = `${name}=; Max-Age=0; path=/; SameSite=Lax`;
   };
 
-  // ฟังก์ชันสร้างเสียง Sound Effects ด้วย Web Audio API
+  // ฟังก์ชันสร้างเสียง Sound Effects ด้วย Web Audio API (รองรับเสียงเข้า/ออกห้อง และจบเกม)
   const playSound = (type) => {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -26,7 +26,7 @@ export default function FootballCardGame() {
       const ctx = new AudioContext();
 
       if (type === 'place') {
-        // เสียงตอนลงการ์ด (Pop สั้นๆ)
+        // เสียงลงการ์ด (Pop สั้นๆ)
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'sine';
@@ -39,7 +39,7 @@ export default function FootballCardGame() {
         osc.start();
         osc.stop(ctx.currentTime + 0.08);
       } else if (type === 'tick') {
-        // เสียงใกล้หมดเวลา (Tick ติ๊กสั้นๆ)
+        // เสียงใกล้หมดเวลา
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'triangle';
@@ -51,7 +51,7 @@ export default function FootballCardGame() {
         osc.start();
         osc.stop(ctx.currentTime + 0.04);
       } else if (type === 'correct') {
-        // เสียงตอบถูก (โน้ตคู่ขึ้นรัวๆ สดใส)
+        // เสียงตอบถูก
         const now = ctx.currentTime;
         [523.25, 659.25, 783.99].forEach((freq, i) => {
           const osc = ctx.createOscillator();
@@ -66,7 +66,7 @@ export default function FootballCardGame() {
           osc.stop(now + i * 0.08 + 0.2);
         });
       } else if (type === 'wrong') {
-        // เสียงตอบผิด (โน้ตต่ำทุ้ม)
+        // เสียงตอบผิด
         const now = ctx.currentTime;
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
@@ -79,6 +79,50 @@ export default function FootballCardGame() {
         gain.connect(ctx.destination);
         osc.start(now);
         osc.stop(now + 0.25);
+      } else if (type === 'join') {
+        // เสียงคนเข้าห้อง (เสียงกระดิ่งใสๆ ขึ้นโน้ตคู่)
+        const now = ctx.currentTime;
+        [440, 880].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + i * 0.1);
+          gain.gain.setValueAtTime(0.2, now + i * 0.1);
+          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.1 + 0.25);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + i * 0.1);
+          osc.stop(now + i * 0.1 + 0.25);
+        });
+      } else if (type === 'leave') {
+        // เสียงคนออกจากห้อง (เสียงโน้ตลงต่ำ)
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(500, now);
+        osc.frequency.linearRampToValueAtTime(250, now + 0.2);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.2);
+      } else if (type === 'victory') {
+        // เสียงจบเกม / ชนะเลิศ (เสียงทิตตี้ฟา-ซอนรัวสดใส)
+        const now = ctx.currentTime;
+        [523.25, 587.33, 659.25, 783.99, 1046.50].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, now + i * 0.12);
+          gain.gain.setValueAtTime(0.25, now + i * 0.12);
+          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.12 + 0.3);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + i * 0.12);
+          osc.stop(now + i * 0.12 + 0.3);
+        });
       }
     } catch (e) {
       console.error('Audio play error:', e);
@@ -166,6 +210,9 @@ export default function FootballCardGame() {
     } else if (roomData.status === 'playing') {
       setGameState('playing');
     } else if (roomData.status === 'finished') {
+      if (gameState !== 'finished') {
+        playSound('victory'); // เล่นเสียงจบเกมเมื่อสถานะเปลี่ยนเป็น finished
+      }
       setGameState('finished');
       if (roomData.winner_data) setWinner(roomData.winner_data);
     }
@@ -179,7 +226,6 @@ export default function FootballCardGame() {
     if (roomData.current_turn !== undefined) setCurrentTurn(roomData.current_turn);
     if (roomData.turn_phase) setTurnPhase(roomData.turn_phase);
     if (roomData.time_left !== undefined) {
-      // เล่นเสียงติ๊กๆ เมื่อเวลาเหลือ 5 วินาทีสุดท้ายในเทิร์น
       if (roomData.time_left <= 5 && roomData.time_left > 0 && roomData.turn_phase === 'placing') {
         playSound('tick');
       }
@@ -226,6 +272,12 @@ export default function FootballCardGame() {
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) {
+      // เช็คจำนวนคนเพื่อเล่นเสียง join/leave เทียบกับ state เดิม
+      if (playersData.length > roomPlayers.length && gameState === 'lobby') {
+        playSound('join');
+      } else if (playersData.length < roomPlayers.length && gameState === 'lobby') {
+        playSound('leave');
+      }
       setRoomPlayers(playersData);
     }
   };
@@ -261,7 +313,7 @@ export default function FootballCardGame() {
       supabase.removeChannel(roomChannel);
       supabase.removeChannel(playersChannel);
     };
-  }, [isLoggedIn, gameState]);
+  }, [isLoggedIn, gameState, roomPlayers.length]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -305,6 +357,7 @@ export default function FootballCardGame() {
   }, [isLoggedIn, gameState]);
 
   const handleLogoutClean = async () => {
+    playSound('leave');
     if (username) {
       if (userRole === 'admin') {
         await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
@@ -323,6 +376,7 @@ export default function FootballCardGame() {
   };
 
   const handleLeaveRoom = async () => {
+    playSound('leave');
     if (username) {
       if (userRole === 'admin') {
         await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
@@ -353,6 +407,7 @@ export default function FootballCardGame() {
 
     const success = await joinRoomProcess(username);
     if (success) {
+      playSound('join');
       setGameState('lobby');
     }
   };
@@ -366,6 +421,7 @@ export default function FootballCardGame() {
 
     const success = await joinRoomProcess(username);
     if (success) {
+      playSound('join');
       setGameState('lobby');
     }
   };
@@ -618,7 +674,7 @@ export default function FootballCardGame() {
   const handleSelectCard = async (cardIdx) => {
     if (isPaused || !isMyTurn || turnPhase !== 'placing') return;
     
-    playSound('place'); // เล่นเสียงลงการ์ดทันที
+    playSound('place');
 
     const player = roomPlayers[currentTurn];
     const card = player.hand[cardIdx];
@@ -657,13 +713,14 @@ export default function FootballCardGame() {
 
   const handleAdminAnswerCorrect = async () => {
     if (userRole !== 'admin') return;
-    playSound('correct'); // เล่นเสียงตอบถูก
+    playSound('correct');
 
     const player = roomPlayers[currentTurn];
     const newScore = (player.score || 0) + 1;
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: newScore } : p);
     
     if (newScore >= 3 && player.hand?.length === 0) {
+      playSound('victory');
       setWinner(player);
       setGameState('finished');
       await supabase.from('rooms').update({
@@ -690,7 +747,7 @@ export default function FootballCardGame() {
 
   const handleAdminAnswerWrong = async () => {
     if (userRole !== 'admin') return;
-    playSound('wrong'); // เล่นเสียงตอบผิด
+    playSound('wrong');
 
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: (p.score || 0) - 1 } : p);
     
@@ -1071,7 +1128,6 @@ export default function FootballCardGame() {
                 </div>
               )}
 
-              {/* ส่วนตัดสินคำตอบ */}
               {turnPhase === 'answering' && (
                 <div className="text-center bg-slate-800 border border-slate-700 p-3.5 rounded-2xl w-full mt-3.5">
                   {userRole === 'admin' ? (
@@ -1095,7 +1151,7 @@ export default function FootballCardGame() {
               )}
             </div>
 
-            {/* Hand Cards (Horizontal Scroll for Mobile) */}
+            {/* Hand Cards */}
             <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl shadow">
               <h4 className="font-bold text-xs mb-2.5 text-emerald-400 flex justify-between items-center">
                 <span>การ์ดในมือคุณ ({roomPlayers.find(p => p.username?.toLowerCase() === username.toLowerCase())?.hand?.length || 0})</span>
