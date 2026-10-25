@@ -47,6 +47,32 @@ export default function FootballCardGame() {
         gain.connect(ctx.destination);
         osc.start();
         osc.stop(ctx.currentTime + 0.04);
+      } else if (type === 'bounce') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(150, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(50, ctx.currentTime + 0.12);
+        gain.gain.setValueAtTime(0.4, ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.01, ctx.currentTime + 0.12);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.12);
+      } else if (type === 'whistle') {
+        const now = ctx.currentTime;
+        [2400, 2600].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + i * 0.15);
+          gain.gain.setValueAtTime(0.2, now + i * 0.15);
+          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.15 + 0.25);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + i * 0.15);
+          osc.stop(now + i * 0.15 + 0.25);
+        });
       } else if (type === 'correct') {
         const now = ctx.currentTime;
         [523.25, 659.25, 783.99].forEach((freq, i) => {
@@ -140,6 +166,7 @@ export default function FootballCardGame() {
 
   const [roomPlayers, setRoomPlayers] = useState([]);
   const prevPlayersLengthRef = useRef(0);
+  const lastSoundEventRef = useRef(null);
   const SINGLE_ROOM_ID = 1;
 
   const [categories, setCategories] = useState({
@@ -200,7 +227,19 @@ export default function FootballCardGame() {
       return;
     }
 
+    if (roomData.sound_event && roomData.sound_event !== lastSoundEventRef.current) {
+      lastSoundEventRef.current = roomData.sound_event;
+      if (roomData.sound_event.startsWith('correct_')) playSound('correct');
+      if (roomData.sound_event.startsWith('wrong_')) playSound('wrong');
+      if (roomData.sound_event.startsWith('place_')) playSound('place');
+      if (roomData.sound_event.startsWith('bounce_')) playSound('bounce');
+      if (roomData.sound_event.startsWith('whistle_')) playSound('whistle');
+    }
+
     if (roomData.status === 'countdown') {
+      if (gameState !== 'countdown') {
+        playSound('whistle');
+      }
       setGameState('countdown');
       if (roomData.countdown_time !== undefined) setCountdownTime(roomData.countdown_time);
     } else if (roomData.status === 'playing') {
@@ -471,8 +510,12 @@ export default function FootballCardGame() {
       if (gameState === 'countdown') {
         if (countdownTime < 5) {
           const nextCount = countdownTime + 1;
+          playSound('bounce');
           setCountdownTime(nextCount);
-          await supabase.from('rooms').update({ countdown_time: nextCount }).eq('id', SINGLE_ROOM_ID);
+          await supabase.from('rooms').update({ 
+            countdown_time: nextCount,
+            sound_event: `bounce_${Date.now()}` 
+          }).eq('id', SINGLE_ROOM_ID);
         } else {
           setGameState('playing');
           setTimeLeft(30);
@@ -716,7 +759,8 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({
       table_cards: updatedTable,
       players_data: updatedPlayers,
-      turn_phase: 'answering'
+      turn_phase: 'answering',
+      sound_event: `place_${Date.now()}`
     }).eq('id', SINGLE_ROOM_ID);
   };
 
@@ -749,7 +793,8 @@ export default function FootballCardGame() {
       await supabase.from('rooms').update({
         status: 'finished',
         winner_data: player,
-        players_data: updatedPlayers
+        players_data: updatedPlayers,
+        sound_event: `correct_${Date.now()}`
       }).eq('id', SINGLE_ROOM_ID);
       return;
     }
@@ -764,7 +809,8 @@ export default function FootballCardGame() {
       players_data: updatedPlayers,
       current_turn: nextTurn,
       time_left: 30,
-      turn_phase: 'placing'
+      turn_phase: 'placing',
+      sound_event: `correct_${Date.now()}`
     }).eq('id', SINGLE_ROOM_ID);
   };
 
@@ -784,7 +830,8 @@ export default function FootballCardGame() {
       players_data: updatedPlayers,
       current_turn: nextTurn,
       time_left: 30,
-      turn_phase: 'placing'
+      turn_phase: 'placing',
+      sound_event: `wrong_${Date.now()}`
     }).eq('id', SINGLE_ROOM_ID);
   };
 
@@ -829,6 +876,7 @@ export default function FootballCardGame() {
     setIsPaused(false);
     setCountdownTime(0); 
     setGameState('countdown');
+    playSound('whistle');
 
     await supabase.from('rooms').upsert({ 
       id: SINGLE_ROOM_ID,
@@ -842,7 +890,8 @@ export default function FootballCardGame() {
       turn_phase: 'placing',
       time_left: 30,
       is_paused: false,
-      winner_data: null
+      winner_data: null,
+      sound_event: `whistle_${Date.now()}`
     });
   };
 
@@ -955,18 +1004,18 @@ export default function FootballCardGame() {
 
       {gameState === 'playing' && isPaused && (
         <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 text-center">
-          <div className="text-5xl mb-3 animate-bounce">⏸️</div>
-          <h2 className="text-2xl font-bold text-amber-400 mb-2">เกมถูกหยุดชั่วคราว</h2>
+          <div className="text-5xl mb-3 animate-bounce">📺</div>
+          <h2 className="text-2xl font-black text-amber-400 mb-2 tracking-widest">VAR CHECK</h2>
           <p className="text-slate-300 text-xs mb-6 px-4">
-            {userRole === 'admin' ? 'คุณสามารถกดปุ่มด้านล่างเพื่อเล่นต่อได้ทันที' : 'กรุณารอ Admin ดำเนินการต่อ...'}
+            {userRole === 'admin' ? 'กำลังตรวจสอบจังหวะการแข่งขัน คุณสามารถกดปุ่มด้านล่างเพื่อเล่นต่อได้ทันที' : 'กรรมการกำลังตรวจสอบภาพช้า (VAR) กรุณารอสักครู่...'}
           </p>
 
           {userRole === 'admin' && (
             <button 
               onClick={togglePauseGame}
-              className="w-full max-w-xs py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-2xl shadow-lg transition cursor-pointer text-sm animate-pulse"
+              className="w-full max-w-xs py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-2xl shadow-lg transition cursor-pointer text-sm animate-pulse flex items-center justify-center gap-2"
             >
-              ▶️ เล่นต่อ (Resume)
+              📺 เล่นต่อ (Resume)
             </button>
           )}
         </div>
@@ -1063,15 +1112,15 @@ export default function FootballCardGame() {
         {/* Countdown */}
         {gameState === 'countdown' && (
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl w-full text-center">
-            <h2 className="text-lg font-black mb-1 text-emerald-400">🚀 เตรียมตัวให้พร้อม!</h2>
-            <p className="text-slate-400 text-xs mb-8">กำลังเข้าสู่สนามแข่งขัน...</p>
+            <h2 className="text-lg font-black mb-1 text-emerald-400">🟨 ปี๊ดดด! เตรียมตัวเริ่มเกม!</h2>
+            <p className="text-slate-400 text-xs mb-8">กรรมการเป่านกหวีดแล้ว...</p>
             
             <div className="relative w-full bg-slate-950 h-7 rounded-full overflow-visible p-1 border border-slate-800 mb-4 shadow-inner">
               <div 
                 className="bg-gradient-to-r from-emerald-600 to-teal-400 h-full rounded-full transition-all duration-1000 ease-linear shadow-lg relative"
                 style={{ width: `${(countdownTime / 5) * 100}%` }}
               >
-                <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-8 h-8 bg-slate-900 rounded-full border-2 border-emerald-400 flex items-center justify-center text-base shadow-lg animate-spin">
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-8 h-8 bg-slate-900 rounded-full border-2 border-emerald-400 flex items-center justify-center text-base shadow-lg animate-bounce">
                   ⚽
                 </div>
               </div>
@@ -1095,9 +1144,10 @@ export default function FootballCardGame() {
                   </button>
                   <button 
                     onClick={togglePauseGame}
-                    className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-[10px] font-bold transition cursor-pointer shadow"
+                    className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-[10px] font-bold transition cursor-pointer shadow flex items-center gap-1"
+                    title="VAR Check"
                   >
-                    ⏸️ หยุด
+                    📺 VAR
                   </button>
                   <button 
                     onClick={handleAdminEndGame}
