@@ -232,7 +232,10 @@ export default function FootballCardGame() {
         }
       }
       prevPlayersLengthRef.current = newLen;
-      setRoomPlayers(playersData);
+      // ถ้าอยู่ในหน้า lobby ให้ใช้ room_players แต่ถ้าเกมเริ่มแล้วให้ใช้ข้อมูลจาก rooms (players_data) แทนเพื่อความถูกต้องของไพ่ในมือ
+      if (gameState === 'lobby') {
+        setRoomPlayers(playersData);
+      }
     }
   };
 
@@ -255,6 +258,7 @@ export default function FootballCardGame() {
       if (roomData.sound_event.startsWith('whistle_')) playSound('whistle');
     }
 
+    // ซิงค์สถานะเกมให้เปลี่ยนตาม Admin ทุกคนในห้องพร้อมกัน
     if (roomData.status === 'countdown') {
       if (gameState !== 'countdown') {
         playSound('whistle');
@@ -269,9 +273,11 @@ export default function FootballCardGame() {
       }
       setGameState('finished');
       if (roomData.winner_data) setWinner(roomData.winner_data);
+    } else if (roomData.status === 'waiting') {
+      setGameState('lobby');
     }
 
-    // ซิงค์ข้อมูล hand และ score จากตาราง rooms (players_data) เพื่อให้ผู้เล่นทุกคนมีไพ่ในมือ
+    // ซิงค์ข้อมูลผู้เล่น (คะแนน และ การ์ดในมือ hand) จาก players_data ในตาราง rooms
     if (roomData.players_data && roomData.players_data.length > 0) {
       setRoomPlayers(roomData.players_data);
     }
