@@ -18,6 +18,7 @@ export default function FootballCardGame() {
     document.cookie = `${name}=; Max-Age=0; path=/; SameSite=Lax`;
   };
 
+  // ฟังก์ชันสร้างเสียง Sound Effects ด้วย Web Audio API
   const playSound = (type) => {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -25,6 +26,7 @@ export default function FootballCardGame() {
       const ctx = new AudioContext();
 
       if (type === 'place') {
+        // เสียงตอนลงการ์ด (Pop สั้นๆ)
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'sine';
@@ -37,6 +39,7 @@ export default function FootballCardGame() {
         osc.start();
         osc.stop(ctx.currentTime + 0.08);
       } else if (type === 'tick') {
+        // เสียงใกล้หมดเวลา (Tick ติ๊กสั้นๆ)
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'triangle';
@@ -48,6 +51,7 @@ export default function FootballCardGame() {
         osc.start();
         osc.stop(ctx.currentTime + 0.04);
       } else if (type === 'correct') {
+        // เสียงตอบถูก (โน้ตคู่ขึ้นรัวๆ สดใส)
         const now = ctx.currentTime;
         [523.25, 659.25, 783.99].forEach((freq, i) => {
           const osc = ctx.createOscillator();
@@ -62,6 +66,7 @@ export default function FootballCardGame() {
           osc.stop(now + i * 0.08 + 0.2);
         });
       } else if (type === 'wrong') {
+        // เสียงตอบผิด (โน้ตต่ำทุ้ม)
         const now = ctx.currentTime;
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
@@ -74,47 +79,6 @@ export default function FootballCardGame() {
         gain.connect(ctx.destination);
         osc.start(now);
         osc.stop(now + 0.25);
-      } else if (type === 'join') {
-        const now = ctx.currentTime;
-        [440, 880].forEach((freq, i) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(freq, now + i * 0.1);
-          gain.gain.setValueAtTime(0.2, now + i * 0.1);
-          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.1 + 0.25);
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(now + i * 0.1);
-          osc.stop(now + i * 0.1 + 0.25);
-        });
-      } else if (type === 'leave') {
-        const now = ctx.currentTime;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(500, now);
-        osc.frequency.linearRampToValueAtTime(250, now + 0.2);
-        gain.gain.setValueAtTime(0.2, now);
-        gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(now);
-        osc.stop(now + 0.2);
-      } else if (type === 'victory') {
-        const now = ctx.currentTime;
-        [523.25, 587.33, 659.25, 783.99, 1046.50].forEach((freq, i) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = 'triangle';
-          osc.frequency.setValueAtTime(freq, now + i * 0.12);
-          gain.gain.setValueAtTime(0.25, now + i * 0.12);
-          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.12 + 0.3);
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(now + i * 0.12);
-          osc.stop(now + i * 0.12 + 0.3);
-        });
       }
     } catch (e) {
       console.error('Audio play error:', e);
@@ -163,8 +127,6 @@ export default function FootballCardGame() {
   const [isPaused, setIsPaused] = useState(false);
   const [winner, setWinner] = useState(null);
   
-  const [selectedCardToConfirm, setSelectedCardToConfirm] = useState(null);
-
   const [newValues, setNewValues] = useState({
     position: '',
     league: '',
@@ -204,9 +166,6 @@ export default function FootballCardGame() {
     } else if (roomData.status === 'playing') {
       setGameState('playing');
     } else if (roomData.status === 'finished') {
-      if (gameState !== 'finished') {
-        playSound('victory');
-      }
       setGameState('finished');
       if (roomData.winner_data) setWinner(roomData.winner_data);
     }
@@ -220,6 +179,7 @@ export default function FootballCardGame() {
     if (roomData.current_turn !== undefined) setCurrentTurn(roomData.current_turn);
     if (roomData.turn_phase) setTurnPhase(roomData.turn_phase);
     if (roomData.time_left !== undefined) {
+      // เล่นเสียงติ๊กๆ เมื่อเวลาเหลือ 5 วินาทีสุดท้ายในเทิร์น
       if (roomData.time_left <= 5 && roomData.time_left > 0 && roomData.turn_phase === 'placing') {
         playSound('tick');
       }
@@ -266,11 +226,6 @@ export default function FootballCardGame() {
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) {
-      if (playersData.length > roomPlayers.length && gameState === 'lobby') {
-        playSound('join');
-      } else if (playersData.length < roomPlayers.length && gameState === 'lobby') {
-        playSound('leave');
-      }
       setRoomPlayers(playersData);
     }
   };
@@ -306,7 +261,7 @@ export default function FootballCardGame() {
       supabase.removeChannel(roomChannel);
       supabase.removeChannel(playersChannel);
     };
-  }, [isLoggedIn, gameState, roomPlayers.length]);
+  }, [isLoggedIn, gameState]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -350,7 +305,6 @@ export default function FootballCardGame() {
   }, [isLoggedIn, gameState]);
 
   const handleLogoutClean = async () => {
-    playSound('leave');
     if (username) {
       if (userRole === 'admin') {
         await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
@@ -369,7 +323,6 @@ export default function FootballCardGame() {
   };
 
   const handleLeaveRoom = async () => {
-    playSound('leave');
     if (username) {
       if (userRole === 'admin') {
         await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
@@ -400,7 +353,6 @@ export default function FootballCardGame() {
 
     const success = await joinRoomProcess(username);
     if (success) {
-      playSound('join');
       setGameState('lobby');
     }
   };
@@ -414,7 +366,6 @@ export default function FootballCardGame() {
 
     const success = await joinRoomProcess(username);
     if (success) {
-      playSound('join');
       setGameState('lobby');
     }
   };
@@ -664,21 +615,13 @@ export default function FootballCardGame() {
 
   const isMyTurn = roomPlayers[currentTurn]?.username?.toLowerCase() === username.toLowerCase();
 
-  const handleOpenConfirmModal = (cardIdx) => {
+  const handleSelectCard = async (cardIdx) => {
     if (isPaused || !isMyTurn || turnPhase !== 'placing') return;
+    
+    playSound('place'); // เล่นเสียงลงการ์ดทันที
+
     const player = roomPlayers[currentTurn];
     const card = player.hand[cardIdx];
-    setSelectedCardToConfirm({ card, cardIdx });
-  };
-
-  const handleConfirmPlayCard = async () => {
-    if (!selectedCardToConfirm) return;
-    const { card, cardIdx } = selectedCardToConfirm;
-    setSelectedCardToConfirm(null);
-
-    playSound('place');
-
-    const player = roomPlayers[currentTurn];
     const updatedHand = player.hand.filter((_, idx) => idx !== cardIdx);
 
     const updatedTable = {
@@ -714,14 +657,13 @@ export default function FootballCardGame() {
 
   const handleAdminAnswerCorrect = async () => {
     if (userRole !== 'admin') return;
-    playSound('correct');
+    playSound('correct'); // เล่นเสียงตอบถูก
 
     const player = roomPlayers[currentTurn];
     const newScore = (player.score || 0) + 1;
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: newScore } : p);
     
     if (newScore >= 3 && player.hand?.length === 0) {
-      playSound('victory');
       setWinner(player);
       setGameState('finished');
       await supabase.from('rooms').update({
@@ -748,7 +690,7 @@ export default function FootballCardGame() {
 
   const handleAdminAnswerWrong = async () => {
     if (userRole !== 'admin') return;
-    playSound('wrong');
+    playSound('wrong'); // เล่นเสียงตอบผิด
 
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: (p.score || 0) - 1 } : p);
     
@@ -894,43 +836,6 @@ export default function FootballCardGame() {
   return (
     <div className="min-h-screen bg-slate-950 text-white p-3 sm:p-4 flex flex-col justify-between font-sans max-w-md mx-auto">
       
-      {selectedCardToConfirm && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 text-center animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl shadow-2xl max-w-xs w-full flex flex-col items-center">
-            <h3 className="text-sm font-bold text-slate-400 mb-2 uppercase">ยืนยันการลงการ์ด</h3>
-            
-            <div className="bg-gradient-to-b from-emerald-600 to-emerald-700 p-3 rounded-2xl shadow-md text-center w-28 my-3 border border-emerald-500/40">
-              <div className="text-[10px] text-emerald-200 uppercase font-bold truncate w-full">{selectedCardToConfirm.card.type}</div>
-              <div className="w-12 h-12 my-2 mx-auto bg-emerald-800/80 rounded-xl overflow-hidden flex items-center justify-center border border-emerald-400/40 shadow-inner">
-                {selectedCardToConfirm.card.image ? (
-                  <img src={selectedCardToConfirm.card.image} alt={selectedCardToConfirm.card.value} className="w-full h-full object-cover" />
-                ) : (
-                  <span className="text-sm">⚽</span>
-                )}
-              </div>
-              <div className="text-xs font-bold text-white truncate w-full px-1">{selectedCardToConfirm.card.value}</div>
-            </div>
-
-            <p className="text-xs text-slate-300 mb-5">คุณต้องการลงการ์ดใบนี้ลงบนโต๊ะใช่หรือไม่?</p>
-
-            <div className="flex gap-2.5 w-full">
-              <button 
-                onClick={() => setSelectedCardToConfirm(null)}
-                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 font-bold rounded-xl text-xs text-slate-300 transition cursor-pointer border border-slate-700"
-              >
-                ยกเลิก
-              </button>
-              <button 
-                onClick={handleConfirmPlayCard}
-                className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl text-xs text-white transition cursor-pointer shadow-lg shadow-emerald-500/20"
-              >
-                ยืนยันลงการ์ด ✅
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {gameState === 'playing' && isPaused && (
         <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 text-center">
           <div className="text-5xl mb-3 animate-bounce">⏸️</div>
@@ -1166,6 +1071,7 @@ export default function FootballCardGame() {
                 </div>
               )}
 
+              {/* ส่วนตัดสินคำตอบ */}
               {turnPhase === 'answering' && (
                 <div className="text-center bg-slate-800 border border-slate-700 p-3.5 rounded-2xl w-full mt-3.5">
                   {userRole === 'admin' ? (
@@ -1189,7 +1095,7 @@ export default function FootballCardGame() {
               )}
             </div>
 
-            {/* Hand Cards */}
+            {/* Hand Cards (Horizontal Scroll for Mobile) */}
             <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl shadow">
               <h4 className="font-bold text-xs mb-2.5 text-emerald-400 flex justify-between items-center">
                 <span>การ์ดในมือคุณ ({roomPlayers.find(p => p.username?.toLowerCase() === username.toLowerCase())?.hand?.length || 0})</span>
@@ -1199,7 +1105,7 @@ export default function FootballCardGame() {
                 {roomPlayers.find(p => p.username?.toLowerCase() === username.toLowerCase())?.hand?.map((card, idx) => (
                   <div 
                     key={idx} 
-                    onClick={() => !isPaused && isMyTurn && turnPhase === 'placing' && handleOpenConfirmModal(idx)}
+                    onClick={() => !isPaused && isMyTurn && turnPhase === 'placing' && handleSelectCard(idx)}
                     className={`p-2.5 rounded-2xl min-w-[95px] max-w-[95px] text-center transition transform flex flex-col items-center shrink-0 border ${
                       !isPaused && isMyTurn && turnPhase === 'placing' 
                         ? 'bg-slate-800 hover:bg-slate-700 cursor-pointer active:scale-95 border-emerald-500/60 shadow-md shadow-emerald-500/10' 
@@ -1288,41 +1194,23 @@ export default function FootballCardGame() {
 
         {/* Finished Screen */}
         {gameState === 'finished' && (
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl shadow-2xl w-full text-center">
-            <div className="text-4xl mb-1 animate-bounce">🏆</div>
-            <h2 className="text-xl font-black mb-1 text-emerald-400">สรุปผลการแข่งขัน</h2>
-            <p className="text-xs text-yellow-400 font-bold mb-4">ผู้ชนะ: {winner?.username} คว้าแชมป์ไปครอง!</p>
+          <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl w-full text-center">
+            <div className="text-5xl mb-2 animate-bounce">🏆</div>
+            <h2 className="text-2xl font-black mb-1 text-emerald-400">ผู้ชนะเลิศ!</h2>
+            <p className="text-lg text-yellow-400 font-bold mb-6">{winner?.username} คว้าแชมป์ไปครอง!</p>
             
-            {/* ตารางแสดงคะแนนผู้เล่นทุกคน */}
-            <div className="bg-slate-950/60 p-3.5 rounded-2xl mb-5 text-left border border-slate-800">
-              <h4 className="text-[11px] font-bold text-slate-400 mb-2 uppercase tracking-wider text-center">คะแนนรวมทั้งหมด:</h4>
-              <div className="space-y-2">
-                {[...roomPlayers]
-                  .sort((a, b) => (b.score || 0) - (a.score || 0))
-                  .map((p, idx) => (
-                    <div key={idx} className="flex justify-between items-center bg-slate-800/80 px-3.5 py-2 rounded-xl text-xs font-semibold border border-slate-700/50">
-                      <div className="flex items-center gap-2">
-                        <span>{idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '👤'}</span>
-                        <span className="text-white">{p.username}</span>
-                      </div>
-                      <span className="text-yellow-400 font-black">{p.score || 0} คะแนน</span>
-                    </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2.5">
+            <div className="flex flex-col gap-3">
               {userRole === 'admin' && (
                 <button 
                   onClick={startGameHost}
-                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-2xl transition cursor-pointer shadow-lg text-xs active:scale-95"
+                  className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-2xl transition cursor-pointer shadow-lg text-xs active:scale-95"
                 >
                   🔄 เริ่มเกมใหม่อีกครั้ง (Restart)
                 </button>
               )}
               <button 
                 onClick={handleAdminEndGame}
-                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-red-400 font-bold rounded-2xl transition cursor-pointer text-xs border border-slate-700 active:scale-95"
+                className="w-full py-3.5 bg-slate-800 hover:bg-slate-700 text-red-400 font-bold rounded-2xl transition cursor-pointer text-xs border border-slate-700 active:scale-95"
               >
                 🚪 กลับสู่หน้าหลัก (Main Menu)
               </button>
