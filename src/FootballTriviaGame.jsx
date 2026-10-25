@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './index.css';
 import { supabase } from './supabaseClient';
 
@@ -18,7 +18,6 @@ export default function FootballCardGame() {
     document.cookie = `${name}=; Max-Age=0; path=/; SameSite=Lax`;
   };
 
-  // ฟังก์ชันสร้างเสียง Sound Effects ด้วย Web Audio API
   const playSound = (type) => {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -26,7 +25,6 @@ export default function FootballCardGame() {
       const ctx = new AudioContext();
 
       if (type === 'place') {
-        // เสียงตอนลงการ์ด (Pop สั้นๆ)
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'sine';
@@ -39,7 +37,6 @@ export default function FootballCardGame() {
         osc.start();
         osc.stop(ctx.currentTime + 0.08);
       } else if (type === 'tick') {
-        // เสียงใกล้หมดเวลา (Tick ติ๊กสั้นๆ)
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'triangle';
@@ -50,8 +47,33 @@ export default function FootballCardGame() {
         gain.connect(ctx.destination);
         osc.start();
         osc.stop(ctx.currentTime + 0.04);
+      } else if (type === 'bounce') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(150, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(50, ctx.currentTime + 0.12);
+        gain.gain.setValueAtTime(0.4, ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.01, ctx.currentTime + 0.12);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.12);
+      } else if (type === 'whistle') {
+        const now = ctx.currentTime;
+        [2400, 2600].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + i * 0.15);
+          gain.gain.setValueAtTime(0.2, now + i * 0.15);
+          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.15 + 0.25);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + i * 0.15);
+          osc.stop(now + i * 0.15 + 0.25);
+        });
       } else if (type === 'correct') {
-        // เสียงตอบถูก (โน้ตคู่ขึ้นรัวๆ สดใส)
         const now = ctx.currentTime;
         [523.25, 659.25, 783.99].forEach((freq, i) => {
           const osc = ctx.createOscillator();
@@ -66,7 +88,6 @@ export default function FootballCardGame() {
           osc.stop(now + i * 0.08 + 0.2);
         });
       } else if (type === 'wrong') {
-        // เสียงตอบผิด (โน้ตต่ำทุ้ม)
         const now = ctx.currentTime;
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
@@ -79,6 +100,47 @@ export default function FootballCardGame() {
         gain.connect(ctx.destination);
         osc.start(now);
         osc.stop(now + 0.25);
+      } else if (type === 'join') {
+        const now = ctx.currentTime;
+        [440, 880].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + i * 0.1);
+          gain.gain.setValueAtTime(0.2, now + i * 0.1);
+          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.1 + 0.25);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + i * 0.1);
+          osc.stop(now + i * 0.1 + 0.25);
+        });
+      } else if (type === 'leave') {
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(500, now);
+        osc.frequency.linearRampToValueAtTime(250, now + 0.2);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.2);
+      } else if (type === 'victory') {
+        const now = ctx.currentTime;
+        [523.25, 587.33, 659.25, 783.99, 1046.50].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, now + i * 0.12);
+          gain.gain.setValueAtTime(0.25, now + i * 0.12);
+          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.12 + 0.3);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + i * 0.12);
+          osc.stop(now + i * 0.12 + 0.3);
+        });
       }
     } catch (e) {
       console.error('Audio play error:', e);
@@ -103,6 +165,8 @@ export default function FootballCardGame() {
   const [hasAdminExists, setHasAdminExists] = useState(false);
 
   const [roomPlayers, setRoomPlayers] = useState([]);
+  const prevPlayersLengthRef = useRef(0);
+  const lastSoundEventRef = useRef(null);
   const SINGLE_ROOM_ID = 1;
 
   const [categories, setCategories] = useState({
@@ -127,6 +191,8 @@ export default function FootballCardGame() {
   const [isPaused, setIsPaused] = useState(false);
   const [winner, setWinner] = useState(null);
   
+  const [selectedCardToConfirm, setSelectedCardToConfirm] = useState(null);
+
   const [newValues, setNewValues] = useState({
     position: '',
     league: '',
@@ -151,26 +217,63 @@ export default function FootballCardGame() {
     }
   };
 
+  const fetchRoomPlayers = async () => {
+    const { data: playersData } = await supabase
+      .from('room_players')
+      .select('*')
+      .eq('room_id', SINGLE_ROOM_ID);
+
+    if (playersData) {
+      const newLen = playersData.length;
+      if (gameState === 'lobby') {
+        if (newLen > prevPlayersLengthRef.current && prevPlayersLengthRef.current > 0) {
+          playSound('join');
+        } else if (newLen < prevPlayersLengthRef.current && prevPlayersLengthRef.current > 0) {
+          playSound('leave');
+        }
+      }
+      prevPlayersLengthRef.current = newLen;
+      setRoomPlayers(playersData);
+    }
+  };
+
   const syncGameState = (roomData) => {
     if (!roomData) {
       if (gameState !== 'mainMenu' && gameState !== 'customize') {
         setGameState('mainMenu');
         setRoomPlayers([]);
+        prevPlayersLengthRef.current = 0;
       }
       return;
     }
 
+    if (roomData.sound_event && roomData.sound_event !== lastSoundEventRef.current) {
+      lastSoundEventRef.current = roomData.sound_event;
+      if (roomData.sound_event.startsWith('correct_')) playSound('correct');
+      if (roomData.sound_event.startsWith('wrong_')) playSound('wrong');
+      if (roomData.sound_event.startsWith('place_')) playSound('place');
+      if (roomData.sound_event.startsWith('bounce_')) playSound('bounce');
+      if (roomData.sound_event.startsWith('whistle_')) playSound('whistle');
+    }
+
     if (roomData.status === 'countdown') {
+      if (gameState !== 'countdown') {
+        playSound('whistle');
+      }
       setGameState('countdown');
       if (roomData.countdown_time !== undefined) setCountdownTime(roomData.countdown_time);
     } else if (roomData.status === 'playing') {
       setGameState('playing');
     } else if (roomData.status === 'finished') {
+      if (gameState !== 'finished') {
+        playSound('victory');
+      }
       setGameState('finished');
       if (roomData.winner_data) setWinner(roomData.winner_data);
     }
 
-    if (roomData.status !== 'waiting' && roomData.players_data) {
+    // ซิงค์ข้อมูลผู้เล่น (คะแนนและการ์ดในมือ) จากตาราง rooms โดยตรงเพื่อให้ทุกคนเห็นตรงกัน
+    if (roomData.players_data) {
       setRoomPlayers(roomData.players_data);
       setInitialPlayerCount(roomData.players_data.length);
     }
@@ -179,7 +282,6 @@ export default function FootballCardGame() {
     if (roomData.current_turn !== undefined) setCurrentTurn(roomData.current_turn);
     if (roomData.turn_phase) setTurnPhase(roomData.turn_phase);
     if (roomData.time_left !== undefined) {
-      // เล่นเสียงติ๊กๆ เมื่อเวลาเหลือ 5 วินาทีสุดท้ายในเทิร์น
       if (roomData.time_left <= 5 && roomData.time_left > 0 && roomData.turn_phase === 'placing') {
         playSound('tick');
       }
@@ -219,28 +321,27 @@ export default function FootballCardGame() {
         return false;
       }
     }
-    await fetchRoomPlayers(SINGLE_ROOM_ID);
+    await fetchRoomPlayers();
     return true;
   };
 
-  const fetchRoomPlayers = async (roomId) => {
-    const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
-    if (playersData) {
-      setRoomPlayers(playersData);
-    }
-  };
-
+  // Realtime Subscription สำหรับ rooms และ room_players
   useEffect(() => {
     if (!isLoggedIn) return;
+
+    const fetchInitialData = async () => {
+      const { data: roomData } = await supabase.from('rooms').select('*').eq('id', SINGLE_ROOM_ID).single();
+      if (roomData) syncGameState(roomData);
+      await fetchRoomPlayers();
+    };
+    fetchInitialData();
 
     const roomChannel = supabase.channel(`room-state-changes-${SINGLE_ROOM_ID}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'rooms', filter: `id=eq.${SINGLE_ROOM_ID}` },
         (payload) => {
-          if (payload.new) {
-            syncGameState(payload.new);
-          }
+          if (payload.new) syncGameState(payload.new);
         }
       )
       .subscribe();
@@ -250,9 +351,7 @@ export default function FootballCardGame() {
         'postgres_changes', 
         { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${SINGLE_ROOM_ID}` }, 
         () => {
-          if (gameState === 'lobby') {
-            fetchRoomPlayers(SINGLE_ROOM_ID);
-          }
+          fetchRoomPlayers();
         }
       )
       .subscribe();
@@ -261,12 +360,13 @@ export default function FootballCardGame() {
       supabase.removeChannel(roomChannel);
       supabase.removeChannel(playersChannel);
     };
-  }, [isLoggedIn, gameState]);
+  }, [isLoggedIn]);
 
+  // Interval ดึงข้อมูลสถานะห้องและผู้เล่นแบบสม่ำเสมอเพื่อความเสถียร
   useEffect(() => {
     if (!isLoggedIn) return;
 
-    const roomInterval = setInterval(async () => {
+    const syncInterval = setInterval(async () => {
       const { data: roomData } = await supabase
         .from('rooms')
         .select('*')
@@ -277,6 +377,7 @@ export default function FootballCardGame() {
         if (gameState === 'lobby' || gameState === 'playing' || gameState === 'countdown' || gameState === 'finished') {
           setGameState('mainMenu');
           setRoomPlayers([]);
+          prevPlayersLengthRef.current = 0;
         }
         return;
       }
@@ -289,22 +390,21 @@ export default function FootballCardGame() {
           await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID);
           setGameState('mainMenu');
           setRoomPlayers([]);
+          prevPlayersLengthRef.current = 0;
           alert('Admin ออกจากห้อง ห้องถูกปิด');
           return;
         }
       }
 
       syncGameState(roomData);
+      await fetchRoomPlayers();
+    }, 1500);
 
-      if (gameState === 'lobby') {
-        fetchRoomPlayers(SINGLE_ROOM_ID);
-      }
-    }, 1000);
-
-    return () => clearInterval(roomInterval);
+    return () => clearInterval(syncInterval);
   }, [isLoggedIn, gameState]);
 
   const handleLogoutClean = async () => {
+    playSound('leave');
     if (username) {
       if (userRole === 'admin') {
         await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
@@ -319,10 +419,12 @@ export default function FootballCardGame() {
     setPassword('');
     setUserRole('player');
     setRoomPlayers([]);
+    prevPlayersLengthRef.current = 0;
     setGameState('mainMenu');
   };
 
   const handleLeaveRoom = async () => {
+    playSound('leave');
     if (username) {
       if (userRole === 'admin') {
         await supabase.from('rooms').delete().eq('id', SINGLE_ROOM_ID);
@@ -330,6 +432,7 @@ export default function FootballCardGame() {
         await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
       }
     }
+    prevPlayersLengthRef.current = 0;
     setGameState('mainMenu');
     setRoomPlayers([]);
   };
@@ -353,6 +456,7 @@ export default function FootballCardGame() {
 
     const success = await joinRoomProcess(username);
     if (success) {
+      prevPlayersLengthRef.current = 1;
       setGameState('lobby');
     }
   };
@@ -363,6 +467,9 @@ export default function FootballCardGame() {
       alert('ยังไม่มีห้องที่ Admin สร้างในขณะนี้');
       return;
     }
+
+    const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
+    prevPlayersLengthRef.current = activePlayers ? activePlayers.length : 0;
 
     const success = await joinRoomProcess(username);
     if (success) {
@@ -381,6 +488,7 @@ export default function FootballCardGame() {
     setIsPaused(false);
     setWinner(null);
     setRoomPlayers([]);
+    prevPlayersLengthRef.current = 0;
   };
 
   const togglePauseGame = async () => {
@@ -400,8 +508,12 @@ export default function FootballCardGame() {
       if (gameState === 'countdown') {
         if (countdownTime < 5) {
           const nextCount = countdownTime + 1;
+          playSound('bounce');
           setCountdownTime(nextCount);
-          await supabase.from('rooms').update({ countdown_time: nextCount }).eq('id', SINGLE_ROOM_ID);
+          await supabase.from('rooms').update({ 
+            countdown_time: nextCount,
+            sound_event: `bounce_${Date.now()}` 
+          }).eq('id', SINGLE_ROOM_ID);
         } else {
           setGameState('playing');
           setTimeLeft(30);
@@ -615,13 +727,21 @@ export default function FootballCardGame() {
 
   const isMyTurn = roomPlayers[currentTurn]?.username?.toLowerCase() === username.toLowerCase();
 
-  const handleSelectCard = async (cardIdx) => {
+  const handleOpenConfirmModal = (cardIdx) => {
     if (isPaused || !isMyTurn || turnPhase !== 'placing') return;
-    
-    playSound('place'); // เล่นเสียงลงการ์ดทันที
-
     const player = roomPlayers[currentTurn];
     const card = player.hand[cardIdx];
+    setSelectedCardToConfirm({ card, cardIdx });
+  };
+
+  const handleConfirmPlayCard = async () => {
+    if (!selectedCardToConfirm) return;
+    const { card, cardIdx } = selectedCardToConfirm;
+    setSelectedCardToConfirm(null);
+
+    playSound('place');
+
+    const player = roomPlayers[currentTurn];
     const updatedHand = player.hand.filter((_, idx) => idx !== cardIdx);
 
     const updatedTable = {
@@ -637,7 +757,8 @@ export default function FootballCardGame() {
     await supabase.from('rooms').update({
       table_cards: updatedTable,
       players_data: updatedPlayers,
-      turn_phase: 'answering'
+      turn_phase: 'answering',
+      sound_event: `place_${Date.now()}`
     }).eq('id', SINGLE_ROOM_ID);
   };
 
@@ -657,19 +778,21 @@ export default function FootballCardGame() {
 
   const handleAdminAnswerCorrect = async () => {
     if (userRole !== 'admin') return;
-    playSound('correct'); // เล่นเสียงตอบถูก
+    playSound('correct');
 
     const player = roomPlayers[currentTurn];
     const newScore = (player.score || 0) + 1;
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: newScore } : p);
     
     if (newScore >= 3 && player.hand?.length === 0) {
+      playSound('victory');
       setWinner(player);
       setGameState('finished');
       await supabase.from('rooms').update({
         status: 'finished',
         winner_data: player,
-        players_data: updatedPlayers
+        players_data: updatedPlayers,
+        sound_event: `correct_${Date.now()}`
       }).eq('id', SINGLE_ROOM_ID);
       return;
     }
@@ -684,13 +807,14 @@ export default function FootballCardGame() {
       players_data: updatedPlayers,
       current_turn: nextTurn,
       time_left: 30,
-      turn_phase: 'placing'
+      turn_phase: 'placing',
+      sound_event: `correct_${Date.now()}`
     }).eq('id', SINGLE_ROOM_ID);
   };
 
   const handleAdminAnswerWrong = async () => {
     if (userRole !== 'admin') return;
-    playSound('wrong'); // เล่นเสียงตอบผิด
+    playSound('wrong');
 
     const updatedPlayers = roomPlayers.map((p, idx) => idx === currentTurn ? { ...p, score: (p.score || 0) - 1 } : p);
     
@@ -704,7 +828,8 @@ export default function FootballCardGame() {
       players_data: updatedPlayers,
       current_turn: nextTurn,
       time_left: 30,
-      turn_phase: 'placing'
+      turn_phase: 'placing',
+      sound_event: `wrong_${Date.now()}`
     }).eq('id', SINGLE_ROOM_ID);
   };
 
@@ -749,6 +874,7 @@ export default function FootballCardGame() {
     setIsPaused(false);
     setCountdownTime(0); 
     setGameState('countdown');
+    playSound('whistle');
 
     await supabase.from('rooms').upsert({ 
       id: SINGLE_ROOM_ID,
@@ -762,7 +888,8 @@ export default function FootballCardGame() {
       turn_phase: 'placing',
       time_left: 30,
       is_paused: false,
-      winner_data: null
+      winner_data: null,
+      sound_event: `whistle_${Date.now()}`
     });
   };
 
@@ -836,20 +963,57 @@ export default function FootballCardGame() {
   return (
     <div className="min-h-screen bg-slate-950 text-white p-3 sm:p-4 flex flex-col justify-between font-sans max-w-md mx-auto">
       
+      {selectedCardToConfirm && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 text-center animate-fade-in">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl shadow-2xl max-w-xs w-full flex flex-col items-center">
+            <h3 className="text-sm font-bold text-slate-400 mb-2 uppercase">ยืนยันการลงการ์ด</h3>
+            
+            <div className="bg-gradient-to-b from-emerald-600 to-emerald-700 p-3 rounded-2xl shadow-md text-center w-28 my-3 border border-emerald-500/40">
+              <div className="text-[10px] text-emerald-200 uppercase font-bold truncate w-full">{selectedCardToConfirm.card.type}</div>
+              <div className="w-12 h-12 my-2 mx-auto bg-emerald-800/80 rounded-xl overflow-hidden flex items-center justify-center border border-emerald-400/40 shadow-inner">
+                {selectedCardToConfirm.card.image ? (
+                  <img src={selectedCardToConfirm.card.image} alt={selectedCardToConfirm.card.value} className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-sm">⚽</span>
+                )}
+              </div>
+              <div className="text-xs font-bold text-white truncate w-full px-1">{selectedCardToConfirm.card.value}</div>
+            </div>
+
+            <p className="text-xs text-slate-300 mb-5">คุณต้องการลงการ์ดใบนี้ลงบนโต๊ะใช่หรือไม่?</p>
+
+            <div className="flex gap-2.5 w-full">
+              <button 
+                onClick={() => setSelectedCardToConfirm(null)}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 font-bold rounded-xl text-xs text-slate-300 transition cursor-pointer border border-slate-700"
+              >
+                ยกเลิก
+              </button>
+              <button 
+                onClick={handleConfirmPlayCard}
+                className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl text-xs text-white transition cursor-pointer shadow-lg shadow-emerald-500/20"
+              >
+                ยืนยันลงการ์ด ✅
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {gameState === 'playing' && isPaused && (
         <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 text-center">
-          <div className="text-5xl mb-3 animate-bounce">⏸️</div>
-          <h2 className="text-2xl font-bold text-amber-400 mb-2">เกมถูกหยุดชั่วคราว</h2>
+          <div className="text-5xl mb-3 animate-bounce">📺</div>
+          <h2 className="text-2xl font-black text-amber-400 mb-2 tracking-widest">VAR CHECK</h2>
           <p className="text-slate-300 text-xs mb-6 px-4">
-            {userRole === 'admin' ? 'คุณสามารถกดปุ่มด้านล่างเพื่อเล่นต่อได้ทันที' : 'กรุณารอ Admin ดำเนินการต่อ...'}
+            {userRole === 'admin' ? 'กำลังตรวจสอบจังหวะการแข่งขัน คุณสามารถกดปุ่มด้านล่างเพื่อเล่นต่อได้ทันที' : 'กรรมการกำลังตรวจสอบภาพช้า (VAR) กรุณารอสักครู่...'}
           </p>
 
           {userRole === 'admin' && (
             <button 
               onClick={togglePauseGame}
-              className="w-full max-w-xs py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-2xl shadow-lg transition cursor-pointer text-sm animate-pulse"
+              className="w-full max-w-xs py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-2xl shadow-lg transition cursor-pointer text-sm animate-pulse flex items-center justify-center gap-2"
             >
-              ▶️ เล่นต่อ (Resume)
+              📺 เล่นต่อ (Resume)
             </button>
           )}
         </div>
@@ -946,15 +1110,15 @@ export default function FootballCardGame() {
         {/* Countdown */}
         {gameState === 'countdown' && (
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl w-full text-center">
-            <h2 className="text-lg font-black mb-1 text-emerald-400">🚀 เตรียมตัวให้พร้อม!</h2>
-            <p className="text-slate-400 text-xs mb-8">กำลังเข้าสู่สนามแข่งขัน...</p>
+            <h2 className="text-lg font-black mb-1 text-emerald-400">🟨 ปี๊ดดด! เตรียมตัวเริ่มเกม!</h2>
+            <p className="text-slate-400 text-xs mb-8">กรรมการเป่านกหวีดแล้ว...</p>
             
             <div className="relative w-full bg-slate-950 h-7 rounded-full overflow-visible p-1 border border-slate-800 mb-4 shadow-inner">
               <div 
                 className="bg-gradient-to-r from-emerald-600 to-teal-400 h-full rounded-full transition-all duration-1000 ease-linear shadow-lg relative"
                 style={{ width: `${(countdownTime / 5) * 100}%` }}
               >
-                <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-8 h-8 bg-slate-900 rounded-full border-2 border-emerald-400 flex items-center justify-center text-base shadow-lg animate-spin">
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-8 h-8 bg-slate-900 rounded-full border-2 border-emerald-400 flex items-center justify-center text-base shadow-lg animate-bounce">
                   ⚽
                 </div>
               </div>
@@ -978,9 +1142,10 @@ export default function FootballCardGame() {
                   </button>
                   <button 
                     onClick={togglePauseGame}
-                    className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-[10px] font-bold transition cursor-pointer shadow"
+                    className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-[10px] font-bold transition cursor-pointer shadow flex items-center gap-1"
+                    title="VAR Check"
                   >
-                    ⏸️ หยุด
+                    📺 VAR
                   </button>
                   <button 
                     onClick={handleAdminEndGame}
@@ -1001,11 +1166,12 @@ export default function FootballCardGame() {
                 </div>
               </div>
               <div className="flex gap-2 items-center">
-                <div className="flex gap-1.5 overflow-x-auto max-w-[160px] pb-1">
+                <div className="flex gap-1.5 overflow-x-auto max-w-[170px] pb-1">
                   {roomPlayers.map((p, idx) => (
                     <div key={idx} className={`text-center px-2 py-1 rounded-xl text-[10px] shrink-0 ${idx === currentTurn ? 'bg-emerald-500/20 border border-emerald-500 text-white font-bold' : 'bg-slate-800 text-slate-400'}`}>
-                      <div>{p.username}</div>
-                      <div className="text-yellow-400 font-black">{p.score || 0}</div>
+                      <div className="truncate max-w-[50px]">{p.username}</div>
+                      <div className="text-yellow-400 font-black">⭐ {p.score || 0}</div>
+                      <div className="text-emerald-300 text-[9px]">🎴 {p.hand?.length || 0}</div>
                     </div>
                   ))}
                 </div>
@@ -1095,7 +1261,7 @@ export default function FootballCardGame() {
               )}
             </div>
 
-            {/* Hand Cards (Horizontal Scroll for Mobile) */}
+            {/* Hand Cards */}
             <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl shadow">
               <h4 className="font-bold text-xs mb-2.5 text-emerald-400 flex justify-between items-center">
                 <span>การ์ดในมือคุณ ({roomPlayers.find(p => p.username?.toLowerCase() === username.toLowerCase())?.hand?.length || 0})</span>
@@ -1105,7 +1271,7 @@ export default function FootballCardGame() {
                 {roomPlayers.find(p => p.username?.toLowerCase() === username.toLowerCase())?.hand?.map((card, idx) => (
                   <div 
                     key={idx} 
-                    onClick={() => !isPaused && isMyTurn && turnPhase === 'placing' && handleSelectCard(idx)}
+                    onClick={() => !isPaused && isMyTurn && turnPhase === 'placing' && handleOpenConfirmModal(idx)}
                     className={`p-2.5 rounded-2xl min-w-[95px] max-w-[95px] text-center transition transform flex flex-col items-center shrink-0 border ${
                       !isPaused && isMyTurn && turnPhase === 'placing' 
                         ? 'bg-slate-800 hover:bg-slate-700 cursor-pointer active:scale-95 border-emerald-500/60 shadow-md shadow-emerald-500/10' 
@@ -1194,23 +1360,40 @@ export default function FootballCardGame() {
 
         {/* Finished Screen */}
         {gameState === 'finished' && (
-          <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl w-full text-center">
-            <div className="text-5xl mb-2 animate-bounce">🏆</div>
-            <h2 className="text-2xl font-black mb-1 text-emerald-400">ผู้ชนะเลิศ!</h2>
-            <p className="text-lg text-yellow-400 font-bold mb-6">{winner?.username} คว้าแชมป์ไปครอง!</p>
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl shadow-2xl w-full text-center">
+            <div className="text-4xl mb-1 animate-bounce">🏆</div>
+            <h2 className="text-xl font-black mb-1 text-emerald-400">สรุปผลการแข่งขัน</h2>
+            <p className="text-xs text-yellow-400 font-bold mb-4">ผู้ชนะ: {winner?.username} คว้าแชมป์ไปครอง!</p>
             
-            <div className="flex flex-col gap-3">
+            <div className="bg-slate-950/60 p-3.5 rounded-2xl mb-5 text-left border border-slate-800">
+              <h4 className="text-[11px] font-bold text-slate-400 mb-2 uppercase tracking-wider text-center">คะแนนรวมทั้งหมด:</h4>
+              <div className="space-y-2">
+                {[...roomPlayers]
+                  .sort((a, b) => (b.score || 0) - (a.score || 0))
+                  .map((p, idx) => (
+                    <div key={idx} className="flex justify-between items-center bg-slate-800/80 px-3.5 py-2 rounded-xl text-xs font-semibold border border-slate-700/50">
+                      <div className="flex items-center gap-2">
+                        <span>{idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '👤'}</span>
+                        <span className="text-white">{p.username}</span>
+                      </div>
+                      <span className="text-yellow-400 font-black">{p.score || 0} คะแนน</span>
+                    </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2.5">
               {userRole === 'admin' && (
                 <button 
                   onClick={startGameHost}
-                  className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-2xl transition cursor-pointer shadow-lg text-xs active:scale-95"
+                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-2xl transition cursor-pointer shadow-lg text-xs active:scale-95"
                 >
                   🔄 เริ่มเกมใหม่อีกครั้ง (Restart)
                 </button>
               )}
               <button 
                 onClick={handleAdminEndGame}
-                className="w-full py-3.5 bg-slate-800 hover:bg-slate-700 text-red-400 font-bold rounded-2xl transition cursor-pointer text-xs border border-slate-700 active:scale-95"
+                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-red-400 font-bold rounded-2xl transition cursor-pointer text-xs border border-slate-700 active:scale-95"
               >
                 🚪 กลับสู่หน้าหลัก (Main Menu)
               </button>
