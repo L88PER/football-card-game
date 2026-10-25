@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './index.css';
 import { supabase } from './supabaseClient';
 
@@ -139,6 +139,7 @@ export default function FootballCardGame() {
   const [hasAdminExists, setHasAdminExists] = useState(false);
 
   const [roomPlayers, setRoomPlayers] = useState([]);
+  const prevPlayersLengthRef = useRef(0);
   const SINGLE_ROOM_ID = 1;
 
   const [categories, setCategories] = useState({
@@ -194,6 +195,7 @@ export default function FootballCardGame() {
       if (gameState !== 'mainMenu' && gameState !== 'customize') {
         setGameState('mainMenu');
         setRoomPlayers([]);
+        prevPlayersLengthRef.current = 0;
       }
       return;
     }
@@ -212,8 +214,17 @@ export default function FootballCardGame() {
     }
 
     if (roomData.status !== 'waiting' && roomData.players_data) {
+      const newLen = roomData.players_data.length;
+      if (gameState === 'lobby') {
+        if (newLen > prevPlayersLengthRef.current && prevPlayersLengthRef.current > 0) {
+          playSound('join');
+        } else if (newLen < prevPlayersLengthRef.current && prevPlayersLengthRef.current > 0) {
+          playSound('leave');
+        }
+      }
+      prevPlayersLengthRef.current = newLen;
       setRoomPlayers(roomData.players_data);
-      setInitialPlayerCount(roomData.players_data.length);
+      setInitialPlayerCount(newLen);
     }
 
     if (roomData.table_cards) setTableCards(roomData.table_cards);
@@ -266,11 +277,15 @@ export default function FootballCardGame() {
   const fetchRoomPlayers = async (roomId) => {
     const { data: playersData } = await supabase.from('room_players').select('*').eq('room_id', roomId);
     if (playersData) {
-      if (playersData.length > roomPlayers.length && gameState === 'lobby') {
-        playSound('join');
-      } else if (playersData.length < roomPlayers.length && gameState === 'lobby') {
-        playSound('leave');
+      const newLen = playersData.length;
+      if (gameState === 'lobby') {
+        if (newLen > prevPlayersLengthRef.current && prevPlayersLengthRef.current > 0) {
+          playSound('join');
+        } else if (newLen < prevPlayersLengthRef.current && prevPlayersLengthRef.current > 0) {
+          playSound('leave');
+        }
       }
+      prevPlayersLengthRef.current = newLen;
       setRoomPlayers(playersData);
     }
   };
@@ -306,7 +321,7 @@ export default function FootballCardGame() {
       supabase.removeChannel(roomChannel);
       supabase.removeChannel(playersChannel);
     };
-  }, [isLoggedIn, gameState, roomPlayers.length]);
+  }, [isLoggedIn, gameState]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -322,6 +337,7 @@ export default function FootballCardGame() {
         if (gameState === 'lobby' || gameState === 'playing' || gameState === 'countdown' || gameState === 'finished') {
           setGameState('mainMenu');
           setRoomPlayers([]);
+          prevPlayersLengthRef.current = 0;
         }
         return;
       }
@@ -334,6 +350,7 @@ export default function FootballCardGame() {
           await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID);
           setGameState('mainMenu');
           setRoomPlayers([]);
+          prevPlayersLengthRef.current = 0;
           alert('Admin ออกจากห้อง ห้องถูกปิด');
           return;
         }
@@ -365,6 +382,7 @@ export default function FootballCardGame() {
     setPassword('');
     setUserRole('player');
     setRoomPlayers([]);
+    prevPlayersLengthRef.current = 0;
     setGameState('mainMenu');
   };
 
@@ -377,6 +395,7 @@ export default function FootballCardGame() {
         await supabase.from('room_players').delete().eq('room_id', SINGLE_ROOM_ID).eq('username', username);
       }
     }
+    prevPlayersLengthRef.current = 0;
     setGameState('mainMenu');
     setRoomPlayers([]);
   };
@@ -400,7 +419,7 @@ export default function FootballCardGame() {
 
     const success = await joinRoomProcess(username);
     if (success) {
-      playSound('join');
+      prevPlayersLengthRef.current = 1;
       setGameState('lobby');
     }
   };
@@ -412,9 +431,11 @@ export default function FootballCardGame() {
       return;
     }
 
+    const { data: activePlayers } = await supabase.from('room_players').select('*').eq('room_id', SINGLE_ROOM_ID);
+    prevPlayersLengthRef.current = activePlayers ? activePlayers.length : 0;
+
     const success = await joinRoomProcess(username);
     if (success) {
-      playSound('join');
       setGameState('lobby');
     }
   };
@@ -430,6 +451,7 @@ export default function FootballCardGame() {
     setIsPaused(false);
     setWinner(null);
     setRoomPlayers([]);
+    prevPlayersLengthRef.current = 0;
   };
 
   const togglePauseGame = async () => {
@@ -1096,11 +1118,12 @@ export default function FootballCardGame() {
                 </div>
               </div>
               <div className="flex gap-2 items-center">
-                <div className="flex gap-1.5 overflow-x-auto max-w-[160px] pb-1">
+                <div className="flex gap-1.5 overflow-x-auto max-w-[170px] pb-1">
                   {roomPlayers.map((p, idx) => (
                     <div key={idx} className={`text-center px-2 py-1 rounded-xl text-[10px] shrink-0 ${idx === currentTurn ? 'bg-emerald-500/20 border border-emerald-500 text-white font-bold' : 'bg-slate-800 text-slate-400'}`}>
-                      <div>{p.username}</div>
-                      <div className="text-yellow-400 font-black">{p.score || 0}</div>
+                      <div className="truncate max-w-[50px]">{p.username}</div>
+                      <div className="text-yellow-400 font-black">⭐ {p.score || 0}</div>
+                      <div className="text-emerald-300 text-[9px]">🎴 {p.hand?.length || 0}</div>
                     </div>
                   ))}
                 </div>
@@ -1293,7 +1316,6 @@ export default function FootballCardGame() {
             <h2 className="text-xl font-black mb-1 text-emerald-400">สรุปผลการแข่งขัน</h2>
             <p className="text-xs text-yellow-400 font-bold mb-4">ผู้ชนะ: {winner?.username} คว้าแชมป์ไปครอง!</p>
             
-            {/* ตารางแสดงคะแนนผู้เล่นทุกคน */}
             <div className="bg-slate-950/60 p-3.5 rounded-2xl mb-5 text-left border border-slate-800">
               <h4 className="text-[11px] font-bold text-slate-400 mb-2 uppercase tracking-wider text-center">คะแนนรวมทั้งหมด:</h4>
               <div className="space-y-2">
